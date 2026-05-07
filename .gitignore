@@ -1,0 +1,25 @@
+# Build directories
+build/
+bin/
+cmake-build-debug/
+cmake-build-release/
+
+# Object files and libraries
+*.o
+*.a
+*.so
+*.dylib
+
+# Editor/IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Unrelated tooling
+docs/superpowers/
