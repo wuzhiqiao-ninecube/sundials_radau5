@@ -42,6 +42,7 @@ radau5_add_example(radau5_roberts_root)
 radau5_add_example(radau5_rocket)
 radau5_add_example(radau5_orbit)
 radau5_add_example(radau5_kepler)
+radau5_add_example(radau5_kneeode)
 
 # ---------------------------------------------------------------------------
 # CTest: each problem with default args, eigenvalue mode and Schur mode
@@ -81,3 +82,4 @@ add_test(NAME radau5_roberts_root COMMAND radau5_roberts_root)
 add_test(NAME radau5_rocket COMMAND radau5_rocket)
 add_test(NAME radau5_orbit COMMAND radau5_orbit)
 add_test(NAME radau5_kepler COMMAND radau5_kepler)
+add_test(NAME radau5_kneeode COMMAND radau5_kneeode)
