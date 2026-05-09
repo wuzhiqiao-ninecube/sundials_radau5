@@ -3,7 +3,8 @@
 ## Introduction
 
 The RADAU5 solver ships with 14 example programs covering stiff ODEs, large-scale banded/sparse
-systems, and differential-algebraic equations (DAEs) of index 1 through 3. Twelve of the fourteen
+systems, and differential-algebraic equations (DAEs) of index 1 through 3, plus 5 event detection
+(rootfinding) examples. Twelve of the fourteen ODE/DAE
 problems come from the **IVP Test Set 2.4** (<http://www.dm.uniba.it/~testset/>); `heat1d` is a
 standard 1D heat equation used to exercise the band matrix path, and `tba` (Two Bit Adding Unit)
 is a large DAE-1 MOSFET circuit problem with 63 discontinuities.
@@ -736,3 +737,177 @@ segment-by-segment and calls `Radau5ResetForDiscontinuity` at each boundary.
 | $y[223]$ | 49 | $S_0$ | $0.2040419147\ldots$ |
 | $y[304]$ | 130 | $S_1$ | $4.9972384557\ldots$ |
 | $y[322]$ | 148 | $C$ | $0.2038985905\ldots$ |
+
+---
+
+## Event Detection (Rootfinding) Examples
+
+The following examples demonstrate the rootfinding capability of RADAU5. They use
+`Radau5RootInit` to register event functions and handle `RADAU5_ROOT_RETURN` in the
+integration loop. These examples do NOT accept the standard `[rtol atol h0 use_schur]`
+command-line arguments — they use hardcoded parameters appropriate for each problem.
+
+### bounce — Bouncing Ball
+
+**Source:** `examples/radau5_bounce.c`
+**Ported from:** MATLAB `ballode.m`
+
+**Equations:**
+
+$$y_1' = y_2 \quad \text{(height)}$$
+$$y_2' = -g \quad \text{(velocity, } g = 9.8\text{)}$$
+
+**Initial conditions:** $y(0) = (0,\; 20)$, ball launched upward.
+
+**Event:** $g_0 = y_1$ (height = 0), direction = $-1$ (falling only). Terminal.
+
+**Behavior:** On each bounce, velocity is reversed with coefficient of restitution 0.9.
+The solver is reinitialized after each event via `Radau5Init`. Runs for 10 bounces
+or until $t = 30$.
+
+**Usage:**
+
+```bash
+./bin/radau5_bounce
+```
+
+**Analytical first bounce time:** $t = 2v_0/g = 40/9.8 \approx 4.0816$
+
+---
+
+### roberts_root — Robertson Chemical Kinetics with Events
+
+**Source:** `examples/radau5_roberts_root.c`
+**Ported from:** SUNDIALS `cvRoberts_dns.c`
+
+**Equations:**
+
+$$y_1' = -0.04\,y_1 + 10^4\,y_2\,y_3$$
+$$y_2' = 0.04\,y_1 - 10^4\,y_2\,y_3 - 3\times10^7\,y_2^2$$
+$$y_3' = 3\times10^7\,y_2^2$$
+
+**Initial conditions:** $y(0) = (1, 0, 0)$, $\;t \in [0, 4\times10^{10}]$
+
+**Events (2 root functions, non-terminal):**
+- $g_0 = y_1 - 10^{-4}$ (species 1 drops to $10^{-4}$)
+- $g_1 = y_3 - 0.01$ (species 3 reaches 0.01)
+
+**Behavior:** Since RADAU5 rootfinding is always terminal, the example resumes
+integration after each root return to simulate non-terminal behavior. Two roots
+are detected: $g_1$ fires near $t \approx 0.264$ and $g_0$ fires near $t \approx 2.08\times10^7$.
+
+**Usage:**
+
+```bash
+./bin/radau5_roberts_root
+```
+
+---
+
+### rocket — Rocket Ascent with Multi-Phase Events
+
+**Source:** `examples/radau5_rocket.c`
+**Ported from:** SUNDIALS `cvRocket_dns.c`
+
+**Equations:**
+
+$$H' = v \quad \text{(height)}$$
+$$v' = a(t,v) \quad \text{(velocity)}$$
+
+where the acceleration depends on engine state:
+- Engine ON: $a = F/(M_r + M_{f0} - r\,t) - D\,v - g$
+- Engine OFF: $a = -D\,v - g$
+
+Parameters: $F = 2200$, $M_r = 10$, $M_{f0} = 1$, $r = 0.1$, $D = 0.3$, $g = 32$, $H_{cut} = 4000$.
+
+**Initial conditions:** $y(0) = (0, 0)$
+
+**Events (multi-phase):**
+- Phase 1 (engine on, 2 root functions):
+  - $g_0 = M_{f0} - r\,t$ (fuel exhaustion)
+  - $g_1 = H - H_{cut}$ (height cutoff)
+- Phase 2 (engine off, 1 root function):
+  - $g_0 = v$ with direction $= -1$ (maximum height when velocity crosses zero falling)
+
+**Behavior:** Demonstrates terminal events with solver restart and dynamic switching
+of the root function set between phases. After engine cutoff, the solver is
+reinitialized with a new root function. After max height is detected, rootfinding
+is disabled for the descent phase.
+
+**Usage:**
+
+```bash
+./bin/radau5_rocket
+```
+
+**Key events:** Engine cutoff at $t \approx 10.0$ (fuel exhaustion at $H \approx 4000$ ft),
+maximum height $\approx 5262$ ft at $t \approx 16.2$.
+
+---
+
+### orbit — Restricted Three-Body Problem with Direction-Sensitive Events
+
+**Source:** `examples/radau5_orbit.c`
+**Ported from:** MATLAB `orbitode.m` (Shampine & Gordon, p.246)
+
+**Equations (rotating frame):**
+
+$$x' = v_x$$
+$$y' = v_y$$
+$$v_x' = 2\,v_y + x - \mu^*(x+\mu)/r_{13} - \mu(x-\mu^*)/r_{23}$$
+$$v_y' = -2\,v_x + y - \mu^*\,y/r_{13} - \mu\,y/r_{23}$$
+
+where $\mu = 1/82.45$, $\mu^* = 1 - \mu$, $r_{13} = ((x+\mu)^2 + y^2)^{3/2}$,
+$r_{23} = ((x-\mu^*)^2 + y^2)^{3/2}$.
+
+**Initial conditions:** $y(0) = (1.2,\; 0,\; 0,\; -1.04935750983031990726)$, $\;t \in [0, 7]$
+
+**Events (2 root functions, same value, different directions):**
+
+$$\frac{d}{dt}\|y - y_0\|^2 = 2\,((x - x_0)\,v_x + (y - y_0)\,v_y)$$
+
+- $g_0$: direction $= +1$ → local minimum of distance (orbit returns to start). **Terminal.**
+- $g_1$: direction $= -1$ → local maximum of distance (farthest point). Non-terminal.
+
+**Behavior:** This is the canonical test for direction-sensitive event detection.
+Both events share the same function value; only the crossing direction distinguishes
+them. The orbit completes one period near $t \approx 6.19$ with the body returning
+to within $\sim 2\times10^{-4}$ of the initial point.
+
+**Usage:**
+
+```bash
+./bin/radau5_orbit
+```
+
+---
+
+### kepler — Kepler Two-Body Orbit with Half-Orbit Counting
+
+**Source:** `examples/radau5_kepler.c`
+**Ported from:** SUNDIALS `ark_kepler.c`
+
+**Equations (Hamiltonian):**
+
+$$q_1' = p_1, \quad q_2' = p_2$$
+$$p_1' = -q_1/(q_1^2 + q_2^2)^{3/2}, \quad p_2' = -q_2/(q_1^2 + q_2^2)^{3/2}$$
+
+**Parameters:** Eccentricity $e = 0.6$, orbital period $T = 2\pi$.
+
+**Initial conditions (perihelion):**
+$q_1(0) = 1-e = 0.4$, $q_2(0) = 0$, $p_1(0) = 0$, $p_2(0) = \sqrt{(1+e)/(1-e)} = 2.0$
+
+**Event:** $g_0 = q_2$ (y-coordinate crosses zero → half-orbit). No direction filter.
+Non-terminal.
+
+**Behavior:** Counts x-axis crossings over multiple orbits. Each crossing represents
+a half-orbit. Also monitors energy conservation ($H = \frac{1}{2}(p_1^2+p_2^2) - 1/r$).
+
+**Usage:**
+
+```bash
+./bin/radau5_kepler
+```
+
+**Expected:** For 16 orbits ($t_{final} = 32\pi$), approximately 31 half-orbit crossings
+with energy drift depending on tolerance.
