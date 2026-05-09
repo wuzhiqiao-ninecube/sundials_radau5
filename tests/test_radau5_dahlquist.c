@@ -53,7 +53,7 @@ static sunrealtype run_one(SUNContext sunctx, sunrealtype rtol, sunrealtype atol
     Radau5SetJacFn(mem, jac_exp);
 
   Radau5SStolerances(mem, rtol, atol);
-  Radau5SetInitStep(mem, 1.0e-3);
+  Radau5SetInitStep(mem, rtol); /* scale initial step with tolerance */
 
   N_Vector yout = N_VNew_Serial(1, sunctx);
   sunrealtype tret;

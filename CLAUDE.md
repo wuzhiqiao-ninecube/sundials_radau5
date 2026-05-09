@@ -61,6 +61,7 @@ radau5_Step (radau5_step.c)
 - **Discontinuity handling**: `Radau5ResetForDiscontinuity(mem, h0)` resets solver state at discontinuity boundaries (h, first, reject, nsing, faccon), matching Fortran radau5 entry behavior. The `first` flag is automatically cleared after the first accepted step, restoring extrapolation for subsequent steps.
 - **Mass matrix M**: User-owned (not destroyed by `Radau5Free`).
 - **Sparse M with sparse J**: When both M and J are sparse, E1's sparsity pattern is the union of J and M (computed lazily in `Radau5Solve` after mass matrix evaluation via `radau5_SparseUnion`). E2 NNZ = 2×nnz_union + 2×nnz_M. KLU solvers are recreated after the pattern merge.
+- **Event detection (rootfinding)**: User provides `Radau5RootFn g(t, y, gout, user_data)` via `Radau5RootInit(mem, nrtfn, g)`. After each accepted step, the solver evaluates g at the step endpoint and checks for sign changes vs the step start. If detected, the Illinois method (modified regula falsi) refines the root location using `Radau5Contr` dense output interpolation — no extra RHS evaluations needed. Solver stops at the root and returns `RADAU5_ROOT_RETURN = 3`. User queries `Radau5GetRootInfo` for which functions fired (+1 rising, -1 falling), then resumes with another `Radau5Solve` call. Direction filtering via `Radau5SetRootDirection`. Root tolerance: `100*uround*max(|tlo|,|thi|)` (matches SUNDIALS).
 
 ### Source Files
 
@@ -76,6 +77,8 @@ radau5_Step (radau5_step.c)
 | `radau5_colgroup.c` | Column grouping (graph coloring) for sparse DQ Jacobian: first-fit greedy coloring with two orderings |
 | `radau5_colgroup.h` | Internal header for column grouping functions |
 | `radau5_ic.c` | Consistent initial conditions for index-1 DAEs |
+| `radau5_root.c` | Rootfinding (event detection): sign-change detection, Illinois method refinement using continuous output |
+| `radau5_root.h` | Internal header for rootfinding functions |
 
 ### Schur Decomposition Details
 
@@ -180,6 +183,16 @@ Unit tests: `test_radau5_constants`, `test_radau5_api`, `test_radau5_build_e1`, 
 | Example | Type | n | Matrix | Default rtol/atol/h0 |
 |---------|------|---|--------|---------------------|
 | ark_analytic | ODE | 1 | dense (lambda=-1e6) | 1e-5 / 1e-10 / 1e-4 |
+
+#### Event detection (rootfinding)
+
+| Example | Type | n | Matrix | Default rtol/atol/h0 |
+|---------|------|---|--------|---------------------|
+| bounce | ODE | 2 | dense | 1e-10 / 1e-12 / 1e-4 |
+| roberts_root | ODE | 3 | dense | 1e-4 / 1e-8 / 1e-4 |
+| rocket | ODE | 2 | dense | 1e-5 / 1e-2 / 1e-3 |
+| orbit | ODE | 4 | dense (DQ) | 1e-5 / 1e-4 / 1e-3 |
+| kepler | ODE | 4 | dense (DQ) | 1e-8 / 1e-10 / 1e-3 |
 
 
 ## Conventions

@@ -153,6 +153,22 @@ typedef struct Radau5Mem_
   sunindextype* sp_rowinds;      /* length sp_nnz: copy of sparsity pattern row indices */
   sunindextype  sp_nnz;          /* number of nonzeros in sparsity pattern */
 
+  /* Rootfinding (event detection) */
+  Radau5RootFn gfun;          /* user root function (NULL = inactive) */
+  int          nrtfn;         /* number of root functions */
+  sunrealtype* glo;           /* g values at step start [nrtfn] */
+  sunrealtype* ghi;           /* g values at step end [nrtfn] */
+  sunrealtype* grout;         /* g values at located root [nrtfn] */
+  int*         iroots;        /* output: +1 rising, -1 falling, 0 none [nrtfn] */
+  int*         rootdir;       /* direction filter: +1, -1, 0 [nrtfn] */
+  int*         gactive;       /* 1=active, 0=masked [nrtfn] */
+  sunrealtype  troot;         /* located root time */
+  N_Vector     y_root;        /* interpolated y at troot (scratch) */
+  long int     nge;           /* total g evaluations */
+  int          root_active;   /* 1 after Radau5RootInit with nrtfn>0 */
+  int          root_init_done;/* 1 after radau5_root_Check1 has run */
+  int          irfnd;         /* 1 = last return was ROOT_RETURN */
+
 } * Radau5Mem;
 
 /* ---------------------------------------------------------------------------
@@ -190,6 +206,12 @@ void radau5_UpdateContinuousOutput(Radau5Mem rmem);
 
 /* radau5_ic.c */
 int radau5_CalcIC(Radau5Mem rmem, N_Vector id);
+
+/* radau5_root.c */
+int radau5_root_Check1(Radau5Mem rmem);
+int radau5_root_Check2(Radau5Mem rmem);
+int radau5_root_Check3(Radau5Mem rmem);
+void radau5_root_Free(Radau5Mem rmem);
 
 /* Utility */
 void radau5_ComputeScal(Radau5Mem rmem, N_Vector y);

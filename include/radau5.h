@@ -39,6 +39,8 @@ extern "C" {
 #define RADAU5_RHSFUNC_RECVR -90  /* internal: recoverable RHS failure, triggers label78 */
 #define RADAU5_MEM_FAIL      -10
 #define RADAU5_IC_FAIL       -11
+#define RADAU5_ROOTFN_FAIL   -12
+#define RADAU5_ROOT_RETURN    3
 
 /* ---------------------------------------------------------------------------
  * User-supplied function types
@@ -62,6 +64,11 @@ typedef int (*Radau5MassFn)(sunrealtype t, SUNMatrix M, void* user_data,
 /* Solution output callback, called after each accepted step. */
 typedef int (*Radau5SolOutFn)(long int nr, sunrealtype told, sunrealtype t,
                               N_Vector y, void* radau5_mem, void* user_data);
+
+/* Root function for event detection: evaluates nrtfn scalar functions g_i(t,y).
+ * Return 0 on success, < 0 for unrecoverable error. */
+typedef int (*Radau5RootFn)(sunrealtype t, N_Vector y, sunrealtype* gout,
+                            void* user_data);
 
 /* ---------------------------------------------------------------------------
  * Create / Destroy
@@ -131,6 +138,14 @@ int Radau5GetNumRejSteps(void* radau5_mem, long int* nrejct);
 int Radau5GetNumNewtonIters(void* radau5_mem, long int* nnewt);
 int Radau5GetCurrentStep(void* radau5_mem, sunrealtype* hcur);
 int Radau5GetCurrentTime(void* radau5_mem, sunrealtype* tcur);
+
+/* ---------------------------------------------------------------------------
+ * Rootfinding (event detection)
+ * ---------------------------------------------------------------------------*/
+int Radau5RootInit(void* radau5_mem, int nrtfn, Radau5RootFn g);
+int Radau5SetRootDirection(void* radau5_mem, int* rootdir);
+int Radau5GetRootInfo(void* radau5_mem, int* rootsfound);
+int Radau5GetNumGEvals(void* radau5_mem, long int* ngevals);
 
 #ifdef __cplusplus
 }

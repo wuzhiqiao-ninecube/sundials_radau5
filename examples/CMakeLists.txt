@@ -37,6 +37,11 @@ radau5_add_example(radau5_crank)
 radau5_add_example(radau5_water)
 radau5_add_example(radau5_fekete)
 radau5_add_example(radau5_tba)
+radau5_add_example(radau5_bounce)
+radau5_add_example(radau5_roberts_root)
+radau5_add_example(radau5_rocket)
+radau5_add_example(radau5_orbit)
+radau5_add_example(radau5_kepler)
 
 # ---------------------------------------------------------------------------
 # CTest: each problem with default args, eigenvalue mode and Schur mode
@@ -69,3 +74,10 @@ radau5_add_tests(crank    1e-6   1e-6   1e-10)
 radau5_add_tests(water    1e-7   1e-7   1e-6)
 radau5_add_tests(fekete   1e-6   1e-6   1e-6)
 radau5_add_tests(tba      1e-5   1e-5   4e-5)
+
+# Rootfinding examples (no Schur variant needed — just run once)
+add_test(NAME radau5_bounce COMMAND radau5_bounce)
+add_test(NAME radau5_roberts_root COMMAND radau5_roberts_root)
+add_test(NAME radau5_rocket COMMAND radau5_rocket)
+add_test(NAME radau5_orbit COMMAND radau5_orbit)
+add_test(NAME radau5_kepler COMMAND radau5_kepler)

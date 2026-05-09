@@ -983,3 +983,110 @@ The following table lists all return codes defined in `radau5.h`.
 | `RADAU5_RHSFUNC_FAIL`    |  -9   | The user-supplied RHS function returned a non-zero (error) value.  |
 | `RADAU5_MEM_FAIL`        | -10   | A memory allocation failed.                                        |
 | `RADAU5_IC_FAIL`         | -11   | Consistent initial condition computation failed.                   |
+| `RADAU5_ROOT_RETURN`     |   3   | A root (event) was found. Query with `Radau5GetRootInfo`.          |
+| `RADAU5_ROOTFN_FAIL`     | -12   | The user-supplied root function returned a negative (error) value. |
+
+## 15. Rootfinding (Event Detection)
+
+RADAU5 can detect zero crossings of user-supplied scalar functions during
+integration. This is useful for locating events such as state thresholds,
+discontinuities, or periodic orbit returns.
+
+### Algorithm
+
+After each accepted step, the solver evaluates the root functions at the step
+endpoint and checks for sign changes relative to the step start. If a sign
+change is detected, the Illinois method (modified regula falsi) refines the
+root location using the continuous output polynomial (`Radau5Contr`) — no
+additional RHS evaluations are needed for refinement. The solver stops at the
+root and returns `RADAU5_ROOT_RETURN`.
+
+Root location tolerance: `100 * unit_roundoff * max(|tlo|, |thi|)` (matches
+SUNDIALS CVODE/ARKODE).
+
+### Radau5RootInit
+
+```c
+int Radau5RootInit(void* radau5_mem, int nrtfn, Radau5RootFn g);
+```
+
+Initialize rootfinding with `nrtfn` root functions. The user-supplied function
+`g` has the signature:
+
+```c
+typedef int (*Radau5RootFn)(sunrealtype t, N_Vector y, sunrealtype* gout,
+                            void* user_data);
+```
+
+It must fill `gout[0..nrtfn-1]` with the values of the root functions at
+`(t, y)`. Return 0 on success, negative on unrecoverable error.
+
+Call `Radau5RootInit(mem, 0, NULL)` to disable rootfinding.
+
+### Radau5SetRootDirection
+
+```c
+int Radau5SetRootDirection(void* radau5_mem, int* rootdir);
+```
+
+Set per-function direction filters. `rootdir[i]` can be:
+- `+1`: detect only rising zero crossings (g goes from negative to positive)
+- `-1`: detect only falling zero crossings (g goes from positive to negative)
+- `0`: detect both directions (default)
+
+### Radau5GetRootInfo
+
+```c
+int Radau5GetRootInfo(void* radau5_mem, int* rootsfound);
+```
+
+After `RADAU5_ROOT_RETURN`, fills `rootsfound[0..nrtfn-1]` with:
+- `+1`: function i crossed zero in the rising direction
+- `-1`: function i crossed zero in the falling direction
+- `0`: function i did not cross zero
+
+### Radau5GetNumGEvals
+
+```c
+int Radau5GetNumGEvals(void* radau5_mem, long int* ngevals);
+```
+
+Returns the cumulative number of root function evaluations.
+
+### Usage Pattern
+
+```c
+/* Define root function */
+int my_rootfn(sunrealtype t, N_Vector y, sunrealtype* gout, void* udata) {
+    sunrealtype* yd = N_VGetArrayPointer(y);
+    gout[0] = yd[0] - threshold;  /* detect y[0] crossing threshold */
+    return 0;
+}
+
+/* Setup */
+Radau5RootInit(mem, 1, my_rootfn);
+int dir[1] = {-1};               /* falling crossings only */
+Radau5SetRootDirection(mem, dir);
+
+/* Integration loop */
+while (1) {
+    int ret = Radau5Solve(mem, tout, yout, &tret);
+    if (ret == RADAU5_ROOT_RETURN) {
+        int info[1];
+        Radau5GetRootInfo(mem, info);
+        /* Handle event at tret, then resume */
+    } else if (ret == RADAU5_SUCCESS) {
+        break;
+    }
+}
+```
+
+### Notes
+
+- Rootfinding is always terminal: the solver stops at each detected root.
+  For non-terminal events, simply call `Radau5Solve` again to resume.
+- After a root return, fired root functions are temporarily deactivated to
+  prevent immediate re-detection. They reactivate once their value becomes
+  nonzero on a subsequent step.
+- Multiple root functions can share the same value but use different direction
+  filters to distinguish events (e.g., local minima vs maxima of distance).

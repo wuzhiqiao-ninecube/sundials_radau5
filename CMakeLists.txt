@@ -14,6 +14,7 @@ set(RADAU5_SOURCES
     src/radau5_contr.c
     src/radau5_ic.c
     src/radau5_colgroup.c
+    src/radau5_root.c
 )
 
 # Library

@@ -117,6 +117,9 @@ void Radau5Free(void** radau5_mem)
   if (rmem->sp_colptrs)    { free(rmem->sp_colptrs);    rmem->sp_colptrs    = NULL; }
   if (rmem->sp_rowinds)    { free(rmem->sp_rowinds);    rmem->sp_rowinds    = NULL; }
 
+  /* Rootfinding */
+  radau5_root_Free(rmem);
+
   free(rmem);
   *radau5_mem = NULL;
 }
@@ -450,6 +453,18 @@ int Radau5Solve(void* radau5_mem, sunrealtype tout, N_Vector yout,
   if (ret != 0) return RADAU5_RHSFUNC_FAIL;
   rmem->nfcn++;
 
+  /* Initialize rootfinding at t0 (once) */
+  if (rmem->root_active && !rmem->root_init_done) {
+    ret = radau5_root_Check1(rmem);
+    if (ret != RADAU5_SUCCESS) return ret;
+  }
+
+  /* Post-root re-entry handling */
+  if (rmem->root_active && rmem->irfnd) {
+    ret = radau5_root_Check2(rmem);
+    if (ret != RADAU5_SUCCESS) return ret;
+  }
+
   /* Set initial step size if not already set by user */
   if (rmem->h == SUN_RCONST(0.0))
     rmem->h = SUN_RCONST(1.0e-6) * posneg;
@@ -505,6 +520,22 @@ int Radau5Solve(void* radau5_mem, sunrealtype tout, N_Vector yout,
 
     if (ret == RADAU5_SUCCESS) {
       /* Step accepted — tn and ycur already updated inside radau5_Step */
+
+      /* Rootfinding check (before solout and tout check) */
+      if (rmem->root_active) {
+        int rret = radau5_root_Check3(rmem);
+        if (rret == RADAU5_ROOT_RETURN) {
+          /* Rewind tn and ycur to the root location */
+          N_VScale(SUN_RCONST(1.0), rmem->y_root, rmem->ycur);
+          rmem->tn = rmem->troot;
+          /* Return to user */
+          N_VScale(SUN_RCONST(1.0), rmem->ycur, yout);
+          *tret = rmem->tn;
+          return RADAU5_ROOT_RETURN;
+        } else if (rret != RADAU5_SUCCESS) {
+          return rret;
+        }
+      }
 
       /* Call solution output callback if provided */
       if (rmem->solout) {
@@ -887,5 +918,95 @@ int Radau5GetCurrentTime(void* radau5_mem, sunrealtype* tcur)
 {
   if (!radau5_mem || !tcur) return RADAU5_MEM_NULL;
   *tcur = RADAU5_MEM(radau5_mem)->tn;
+  return RADAU5_SUCCESS;
+}
+
+/* ===========================================================================
+ * Rootfinding API
+ * ===========================================================================*/
+
+int Radau5RootInit(void* radau5_mem, int nrtfn, Radau5RootFn g)
+{
+  if (!radau5_mem) return RADAU5_MEM_NULL;
+  Radau5Mem rmem = RADAU5_MEM(radau5_mem);
+
+  /* If disabling rootfinding */
+  if (nrtfn == 0 || g == NULL) {
+    radau5_root_Free(rmem);
+    return RADAU5_SUCCESS;
+  }
+
+  if (nrtfn < 0) return RADAU5_ILL_INPUT;
+  if (!rmem->setup_done) return RADAU5_ILL_INPUT;
+
+  /* Free any previous rootfinding data */
+  radau5_root_Free(rmem);
+
+  /* Allocate arrays */
+  rmem->glo     = (sunrealtype*)calloc(nrtfn, sizeof(sunrealtype));
+  rmem->ghi     = (sunrealtype*)calloc(nrtfn, sizeof(sunrealtype));
+  rmem->grout   = (sunrealtype*)calloc(nrtfn, sizeof(sunrealtype));
+  rmem->iroots  = (int*)calloc(nrtfn, sizeof(int));
+  rmem->rootdir = (int*)calloc(nrtfn, sizeof(int));
+  rmem->gactive = (int*)malloc(nrtfn * sizeof(int));
+
+  if (!rmem->glo || !rmem->ghi || !rmem->grout ||
+      !rmem->iroots || !rmem->rootdir || !rmem->gactive) {
+    radau5_root_Free(rmem);
+    return RADAU5_MEM_FAIL;
+  }
+
+  /* Initialize gactive to all active */
+  for (int i = 0; i < nrtfn; i++)
+    rmem->gactive[i] = 1;
+
+  /* Clone y_root from ycur */
+  rmem->y_root = N_VClone(rmem->ycur);
+  if (!rmem->y_root) {
+    radau5_root_Free(rmem);
+    return RADAU5_MEM_FAIL;
+  }
+
+  rmem->gfun = g;
+  rmem->nrtfn = nrtfn;
+  rmem->nge = 0;
+  rmem->troot = SUN_RCONST(0.0);
+  rmem->root_active = 1;
+  rmem->root_init_done = 0;
+  rmem->irfnd = 0;
+
+  return RADAU5_SUCCESS;
+}
+
+int Radau5SetRootDirection(void* radau5_mem, int* rootdir)
+{
+  if (!radau5_mem) return RADAU5_MEM_NULL;
+  Radau5Mem rmem = RADAU5_MEM(radau5_mem);
+  if (!rmem->root_active) return RADAU5_ILL_INPUT;
+  if (!rootdir) return RADAU5_ILL_INPUT;
+
+  for (int i = 0; i < rmem->nrtfn; i++)
+    rmem->rootdir[i] = rootdir[i];
+
+  return RADAU5_SUCCESS;
+}
+
+int Radau5GetRootInfo(void* radau5_mem, int* rootsfound)
+{
+  if (!radau5_mem) return RADAU5_MEM_NULL;
+  Radau5Mem rmem = RADAU5_MEM(radau5_mem);
+  if (!rmem->root_active) return RADAU5_ILL_INPUT;
+  if (!rootsfound) return RADAU5_ILL_INPUT;
+
+  for (int i = 0; i < rmem->nrtfn; i++)
+    rootsfound[i] = rmem->iroots[i];
+
+  return RADAU5_SUCCESS;
+}
+
+int Radau5GetNumGEvals(void* radau5_mem, long int* ngevals)
+{
+  if (!radau5_mem || !ngevals) return RADAU5_MEM_NULL;
+  *ngevals = RADAU5_MEM(radau5_mem)->nge;
   return RADAU5_SUCCESS;
 }

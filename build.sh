@@ -19,7 +19,7 @@ ${SUNDIALS_BUILD}/src/sundials/libsundials_core.a"
 MPI_LIB="-L/usr/lib/x86_64-linux-gnu/openmpi/lib -lmpi"
 KLU_LIB="-lklu -lamd -lcolamd -lbtf -lsuitesparseconfig"
 
-RADAU5_SRCS="${RADAU5}/src/radau5.c ${RADAU5}/src/radau5_linsys.c ${RADAU5}/src/radau5_newt.c ${RADAU5}/src/radau5_estrad.c ${RADAU5}/src/radau5_step.c ${RADAU5}/src/radau5_contr.c ${RADAU5}/src/radau5_ic.c ${RADAU5}/src/radau5_colgroup.c"
+RADAU5_SRCS="${RADAU5}/src/radau5.c ${RADAU5}/src/radau5_linsys.c ${RADAU5}/src/radau5_newt.c ${RADAU5}/src/radau5_estrad.c ${RADAU5}/src/radau5_step.c ${RADAU5}/src/radau5_contr.c ${RADAU5}/src/radau5_ic.c ${RADAU5}/src/radau5_colgroup.c ${RADAU5}/src/radau5_root.c"
 
 mkdir -p bin
 
