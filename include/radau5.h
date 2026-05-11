@@ -106,6 +106,7 @@ int Radau5SetStartNewton(void* radau5_mem, int startn);
 int Radau5SetSchurDecomp(void* radau5_mem, int use_schur);
 int Radau5ResetForDiscontinuity(void* radau5_mem, sunrealtype h0);
 int Radau5SetSparsityPattern(void* radau5_mem, SUNMatrix S);
+int Radau5SetNumStages(void* radau5_mem, int ns);
 int Radau5SStolerances(void* radau5_mem, sunrealtype rtol, sunrealtype atol);
 int Radau5SVtolerances(void* radau5_mem, N_Vector rtol, N_Vector atol);
 

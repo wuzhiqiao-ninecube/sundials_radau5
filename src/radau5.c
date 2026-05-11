@@ -746,6 +746,23 @@ int Radau5SetSchurDecomp(void* radau5_mem, int use_schur)
 }
 
 /* ===========================================================================
+ * Radau5SetNumStages — set the number of stages (3, 5, or 7)
+ *
+ * Must be called BEFORE Radau5Init. Sets ns and npairs.
+ * Default is ns=3 (order 5). ns=5 gives order 9, ns=7 gives order 13.
+ * ===========================================================================*/
+int Radau5SetNumStages(void* radau5_mem, int ns)
+{
+  if (!radau5_mem) return RADAU5_MEM_NULL;
+  if (ns != 3 && ns != 5 && ns != 7) return RADAU5_ILL_INPUT;
+  Radau5Mem rmem = RADAU5_MEM(radau5_mem);
+  if (rmem->setup_done) return RADAU5_ILL_INPUT; /* must be called before Init */
+  rmem->ns = ns;
+  rmem->npairs = (ns - 1) / 2;
+  return RADAU5_SUCCESS;
+}
+
+/* ===========================================================================
  * Radau5SetSparsityPattern — set sparsity pattern for sparse DQ Jacobian
  *
  * Extracts the CSC structure from S, computes column grouping immediately,
