@@ -12,6 +12,10 @@
 extern "C" {
 #endif
 
+/* Maximum number of stages supported */
+#define RADAU5_NS_MAX 7
+#define RADAU5_NPAIRS_MAX 3  /* (RADAU5_NS_MAX-1)/2 */
+
 /* ---------------------------------------------------------------------------
  * Solver memory structure
  * ---------------------------------------------------------------------------*/
@@ -19,6 +23,10 @@ typedef struct Radau5Mem_
 {
   SUNContext sunctx;
   sunindextype n; /* problem dimension */
+
+  /* Variable-order support */
+  int ns;      /* current number of stages (3, 5, or 7) */
+  int npairs;  /* (ns-1)/2: number of complex eigenvalue pairs */
 
   /* User functions */
   Radau5RhsFn rhs;

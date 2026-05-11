@@ -46,6 +46,10 @@ void* Radau5Create(SUNContext sunctx)
   rmem->quot1  = SUN_RCONST(1.0);
   rmem->quot2  = SUN_RCONST(1.2);  /* Fortran default: 1.2 (NOT 6) */
 
+  /* Variable-order defaults */
+  rmem->ns     = 3;
+  rmem->npairs = 1;
+
   /* Scalar tolerances defaults */
   rmem->rtol_s = SUN_RCONST(1.0e-6);
   rmem->atol_s = SUN_RCONST(1.0e-6);
