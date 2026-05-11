@@ -193,6 +193,7 @@ Unit tests: `test_radau5_constants`, `test_radau5_api`, `test_radau5_build_e1`, 
 | rocket | ODE | 2 | dense | 1e-5 / 1e-2 / 1e-3 |
 | orbit | ODE | 4 | dense (DQ) | 1e-5 / 1e-4 / 1e-3 |
 | kepler | ODE | 4 | dense (DQ) | 1e-8 / 1e-10 / 1e-3 |
+| kneeode | ODE | 1 | dense | 1e-3 / 1e-6 / 1e-6 |
 
 
 ## Conventions

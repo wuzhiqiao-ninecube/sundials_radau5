@@ -911,3 +911,38 @@ a half-orbit. Also monitors energy conservation ($H = \frac{1}{2}(p_1^2+p_2^2) -
 
 **Expected:** For 16 orbits ($t_{final} = 32\pi$), approximately 31 half-orbit crossings
 with energy drift depending on tolerance.
+
+---
+
+### kneeode — Knee Problem with Non-Negativity via Rootfinding
+
+**Source:** `examples/radau5_kneeode.c`
+**Ported from:** MATLAB `kneeode.m` (Dahlquist, Edsberg, Skollermo, Soderlind)
+
+**Equations:**
+
+$$\varepsilon\,y' = (1-x)\,y - y^2, \quad \varepsilon = 10^{-6}$$
+
+**Initial conditions:** $y(0) = 1$, $\;x \in [0, 2]$
+
+**Behavior:** The solution follows the isocline $y = 1-x$ for $x < 1$, then drops
+to $y = 0$ for $x > 1$. Without non-negativity enforcement, numerical solvers
+overshoot and produce incorrect negative solutions near the "knee" at $x = 1$.
+
+**Event:** $g_0 = y$ (detect $y = 0$), direction $= -1$ (falling only). Terminal.
+
+After the event fires (near $x \approx 1.006$), the solution is held at $y = 0$
+for the remainder of the integration. This works because $f(t, 0) = 0$ — zero is
+a stable equilibrium for $x > 1$.
+
+**Key technique:** This example demonstrates using rootfinding as a workaround for
+the lack of built-in `NonNegative` constraints in RADAU5. The approach is applicable
+whenever the zero boundary is a stable equilibrium of the ODE.
+
+**Usage:**
+
+```bash
+./bin/radau5_kneeode
+```
+
+The example runs twice (with and without the constraint) and prints a comparison table.
