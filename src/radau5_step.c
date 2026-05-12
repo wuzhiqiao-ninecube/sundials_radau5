@@ -19,6 +19,7 @@ int radau5_Step(Radau5Mem rmem)
 {
   sunindextype n    = rmem->n;
   sunrealtype  uround = SUN_UNIT_ROUNDOFF;
+  int ns = rmem->ns;
 
   /* Collocation node offsets */
   sunrealtype c1   = rmem->c[0];
@@ -234,7 +235,7 @@ label30:
 
   /* Compute proposed new step size */
   fac  = SUNMIN(safe, cfac / (sunrealtype)(newt + 2 * rmem->nit));
-  quot = SUNMAX(facr, SUNMIN(facl, SUNRpowerR(err, SUN_RCONST(0.25)) / fac));
+  quot = SUNMAX(facr, SUNMIN(facl, SUNRpowerR(err, SUN_RCONST(1.0) / (sunrealtype)(ns + 1)) / fac));
   hnew = rmem->h / quot;
 
 
@@ -251,7 +252,7 @@ label30:
     if (rmem->pred == 1 && rmem->naccpt > 1)
     {
       facgus = (rmem->hacc / rmem->h)
-             * SUNRpowerR(err * err / rmem->erracc, SUN_RCONST(0.25))
+             * SUNRpowerR(err * err / rmem->erracc, SUN_RCONST(1.0) / (sunrealtype)(ns + 1))
              / safe;
       facgus = SUNMAX(facr, SUNMIN(facl, facgus));
       quot   = SUNMAX(quot, facgus);
