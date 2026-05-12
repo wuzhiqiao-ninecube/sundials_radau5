@@ -12,6 +12,7 @@
  * ---------------------------------------------------------------------------*/
 
 #include <math.h>
+#include <string.h>
 #include <stdlib.h>
 #include <sundials/sundials_math.h>
 #include <sunmatrix/sunmatrix_dense.h>
@@ -148,131 +149,152 @@ static const sunrealtype TS7[49] = {
  * ---------------------------------------------------------------------------*/
 int radau5_InitConstants(Radau5Mem rmem)
 {
-  sunrealtype SQ6, c1, c2, c1m1, c2m1, c1mc2;
-  sunrealtype u1, alph, beta, cno;
-  sunrealtype uround, rtol;
+  int ns = rmem->ns;
+  int npairs = rmem->npairs;
 
-  SQ6   = sqrt(SUN_RCONST(6.0));
-  c1    = (SUN_RCONST(4.0) - SQ6) / SUN_RCONST(10.0);
-  c2    = (SUN_RCONST(4.0) + SQ6) / SUN_RCONST(10.0);
-  c1m1  = c1 - SUN_RCONST(1.0);
-  c2m1  = c2 - SUN_RCONST(1.0);
-  c1mc2 = c1 - c2;
+  if (ns == 3)
+  {
+    /* --- NS=3 (order 5) constants --- */
+    sunrealtype SQ6 = sqrt(SUN_RCONST(6.0));
+    sunrealtype c1  = (SUN_RCONST(4.0) - SQ6) / SUN_RCONST(10.0);
+    sunrealtype c2  = (SUN_RCONST(4.0) + SQ6) / SUN_RCONST(10.0);
 
-  rmem->c[0]   = c1;
-  rmem->c[1]   = c2;
-  
-  
+    rmem->c[0] = c1;
+    rmem->c[1] = c2;
+    rmem->c[2] = SUN_RCONST(1.0);
 
-  rmem->dd[0] = -(SUN_RCONST(13.0) + SUN_RCONST(7.0) * SQ6) / SUN_RCONST(3.0);
-  rmem->dd[1] = (-SUN_RCONST(13.0) + SUN_RCONST(7.0) * SQ6) / SUN_RCONST(3.0);
-  rmem->dd[2] = -SUN_RCONST(1.0) / SUN_RCONST(3.0);
+    rmem->dd[0] = -(SUN_RCONST(13.0) + SUN_RCONST(7.0) * SQ6) / SUN_RCONST(3.0);
+    rmem->dd[1] = (-SUN_RCONST(13.0) + SUN_RCONST(7.0) * SQ6) / SUN_RCONST(3.0);
+    rmem->dd[2] = -SUN_RCONST(1.0) / SUN_RCONST(3.0);
 
-  u1   = (SUN_RCONST(6.0) + pow(SUN_RCONST(81.0), SUN_RCONST(1.0)/SUN_RCONST(3.0))
-                           - pow(SUN_RCONST(9.0),  SUN_RCONST(1.0)/SUN_RCONST(3.0)))
-         / SUN_RCONST(30.0);
-  alph = (SUN_RCONST(12.0) - pow(SUN_RCONST(81.0), SUN_RCONST(1.0)/SUN_RCONST(3.0))
-                            + pow(SUN_RCONST(9.0),  SUN_RCONST(1.0)/SUN_RCONST(3.0)))
-         / SUN_RCONST(60.0);
-  beta = (pow(SUN_RCONST(81.0), SUN_RCONST(1.0)/SUN_RCONST(3.0))
-        + pow(SUN_RCONST(9.0),  SUN_RCONST(1.0)/SUN_RCONST(3.0)))
-         * sqrt(SUN_RCONST(3.0)) / SUN_RCONST(60.0);
+    sunrealtype u1 = (SUN_RCONST(6.0) + pow(SUN_RCONST(81.0), SUN_RCONST(1.0)/SUN_RCONST(3.0))
+                                        - pow(SUN_RCONST(9.0),  SUN_RCONST(1.0)/SUN_RCONST(3.0)))
+                     / SUN_RCONST(30.0);
+    sunrealtype alph = (SUN_RCONST(12.0) - pow(SUN_RCONST(81.0), SUN_RCONST(1.0)/SUN_RCONST(3.0))
+                                          + pow(SUN_RCONST(9.0),  SUN_RCONST(1.0)/SUN_RCONST(3.0)))
+                       / SUN_RCONST(60.0);
+    sunrealtype beta = (pow(SUN_RCONST(81.0), SUN_RCONST(1.0)/SUN_RCONST(3.0))
+                       + pow(SUN_RCONST(9.0),  SUN_RCONST(1.0)/SUN_RCONST(3.0)))
+                       * sqrt(SUN_RCONST(3.0)) / SUN_RCONST(60.0);
+    sunrealtype cno = alph * alph + beta * beta;
+    u1   = SUN_RCONST(1.0) / u1;
+    alph = alph / cno;
+    beta = beta / cno;
 
-  cno  = alph * alph + beta * beta;
+    rmem->u1 = u1;
+    rmem->alph[0] = alph;
+    rmem->beta_eig[0] = beta;
 
-  /* Invert: u1 → 1/u1, alph → alph/cno, beta → beta/cno */
-  u1   = SUN_RCONST(1.0) / u1;
-  alph = alph / cno;
-beta = beta / cno;
+    /* Eigenvector matrix T (3x3 row-major) */
+    rmem->T_mat[0] =  SUN_RCONST(9.1232394870892942792e-02);
+    rmem->T_mat[1] = -SUN_RCONST(0.14125529502095420843);
+    rmem->T_mat[2] = -SUN_RCONST(3.0029194105147424492e-02);
+    rmem->T_mat[3] =  SUN_RCONST(0.24171793270710701896);
+    rmem->T_mat[4] =  SUN_RCONST(0.20412935229379993199);
+    rmem->T_mat[5] =  SUN_RCONST(0.38294211275726193779);
+    rmem->T_mat[6] =  SUN_RCONST(0.96604818261509293619);
+    rmem->T_mat[7] =  SUN_RCONST(1.0);  /* T32 */
+    rmem->T_mat[8] =  SUN_RCONST(0.0);  /* T33 */
 
-  rmem->u1   = u1;
-  rmem->alph[0] = alph;
-  rmem->beta_eig[0] = beta;
+    /* Inverse eigenvector matrix TI (3x3 row-major) */
+    rmem->TI_mat[0] =  SUN_RCONST(4.3255798900631553510);
+    rmem->TI_mat[1] =  SUN_RCONST(0.33919925181580986954);
+    rmem->TI_mat[2] =  SUN_RCONST(0.54177053993587487119);
+    rmem->TI_mat[3] = -SUN_RCONST(4.1787185915519047273);
+    rmem->TI_mat[4] = -SUN_RCONST(0.32768282076106238708);
+    rmem->TI_mat[5] =  SUN_RCONST(0.47662355450055045196);
+    rmem->TI_mat[6] = -SUN_RCONST(0.50287263494578687595);
+    rmem->TI_mat[7] =  SUN_RCONST(2.5719269498556054292);
+    rmem->TI_mat[8] = -SUN_RCONST(0.59603920482822492497);
 
-  /* Eigenvector matrix T (hardcoded from Fortran) */
-  rmem->T_mat[0] =  SUN_RCONST(9.1232394870892942792e-02);
-  rmem->T_mat[1] = -SUN_RCONST(0.14125529502095420843);
-  rmem->T_mat[2] = -SUN_RCONST(3.0029194105147424492e-02);
-  rmem->T_mat[3] =  SUN_RCONST(0.24171793270710701896);
-  rmem->T_mat[4] =  SUN_RCONST(0.20412935229379993199);
-  rmem->T_mat[5] =  SUN_RCONST(0.38294211275726193779);
-  rmem->T_mat[6] =  SUN_RCONST(0.96604818261509293619);
-  /* T32 = 1, T33 = 0 are implicit in the Fortran formulation */
+    /* Schur constants for ns=3 */
+    if (rmem->use_schur)
+    {
+      rmem->US_mat[0] =  SUN_RCONST( 0.138665108751908);
+      rmem->US_mat[1] =  SUN_RCONST( 0.046278149309488);
+      rmem->US_mat[2] =  SUN_RCONST( 0.989257459163847);
+      rmem->US_mat[3] =  SUN_RCONST(-0.229641242351741);
+      rmem->US_mat[4] =  SUN_RCONST(-0.970178886551833);
+      rmem->US_mat[5] =  SUN_RCONST( 0.077574660168092);
+      rmem->US_mat[6] =  SUN_RCONST(-0.963346711950568);
+      rmem->US_mat[7] =  SUN_RCONST( 0.237931210616713);
+      rmem->US_mat[8] =  SUN_RCONST( 0.123902589111344);
 
-  /* Inverse eigenvector matrix TI */
-  rmem->TI_mat[0] =  SUN_RCONST(4.3255798900631553510);
-  rmem->TI_mat[1] =  SUN_RCONST(0.33919925181580986954);
-  rmem->TI_mat[2] =  SUN_RCONST(0.54177053993587487119);
-  rmem->TI_mat[3] = -SUN_RCONST(4.1787185915519047273);
-  rmem->TI_mat[4] = -SUN_RCONST(0.32768282076106238708);
-  rmem->TI_mat[5] =  SUN_RCONST(0.47662355450055045196);
-  rmem->TI_mat[6] = -SUN_RCONST(0.50287263494578687595);
-  rmem->TI_mat[7] =  SUN_RCONST(2.5719269498556054292);
-  rmem->TI_mat[8] = -SUN_RCONST(0.59603920482822492497);
+      rmem->TS_mat[0] =  SUN_RCONST( 2.68108287362775);
+      rmem->TS_mat[1] =  SUN_RCONST(-8.42387579808538);
+      rmem->TS_mat[2] =  SUN_RCONST(-4.08857781305964);
+      rmem->TS_mat[3] =  SUN_RCONST( 1.10461319985220);
+      rmem->TS_mat[4] =  SUN_RCONST( 2.68108287362775);
+      rmem->TS_mat[5] =  SUN_RCONST( 4.70015200634394);
+      rmem->TS_mat[6] =  SUN_RCONST( 0.0);
+      rmem->TS_mat[7] =  SUN_RCONST( 0.0);
+      rmem->TS_mat[8] =  SUN_RCONST( 3.63783425274450);
 
-  /* --- Tolerance transformation is deferred to Radau5Solve (first call)
-   * because user may call Radau5SStolerances after Radau5Init. --- */
+      rmem->u1 = rmem->TS_mat[8]; /* real eigenvalue from 1x1 block */
+
+      /* T = US, TI = US^T */
+      for (int i = 0; i < 3; i++)
+        for (int j = 0; j < 3; j++) {
+          rmem->T_mat[i*3+j] = rmem->US_mat[i*3+j];
+          rmem->TI_mat[i*3+j] = rmem->US_mat[j*3+i]; /* transpose */
+        }
+    }
+  }
+  else if (ns == 5)
+  {
+    /* --- NS=5 (order 9) constants from precomputed tables --- */
+    memcpy(rmem->c, C5, 5 * sizeof(sunrealtype));
+    memcpy(rmem->dd, DD5, 5 * sizeof(sunrealtype));
+    rmem->u1 = U1_5;
+    memcpy(rmem->alph, ALPH5, 2 * sizeof(sunrealtype));
+    memcpy(rmem->beta_eig, BETA5, 2 * sizeof(sunrealtype));
+    memcpy(rmem->T_mat, T5, 25 * sizeof(sunrealtype));
+    memcpy(rmem->TI_mat, TI5, 25 * sizeof(sunrealtype));
+
+    if (rmem->use_schur)
+    {
+      memcpy(rmem->US_mat, US5, 25 * sizeof(sunrealtype));
+      memcpy(rmem->TS_mat, TS5, 25 * sizeof(sunrealtype));
+      rmem->u1 = rmem->TS_mat[4*5+4]; /* TS[4][4] = real eigenvalue */
+      /* T = US, TI = US^T */
+      for (int i = 0; i < 5; i++)
+        for (int j = 0; j < 5; j++) {
+          rmem->T_mat[i*5+j] = rmem->US_mat[i*5+j];
+          rmem->TI_mat[i*5+j] = rmem->US_mat[j*5+i];
+        }
+    }
+  }
+  else if (ns == 7)
+  {
+    /* --- NS=7 (order 13) constants from precomputed tables --- */
+    memcpy(rmem->c, C7, 7 * sizeof(sunrealtype));
+    memcpy(rmem->dd, DD7, 7 * sizeof(sunrealtype));
+    rmem->u1 = U1_7;
+    memcpy(rmem->alph, ALPH7, 3 * sizeof(sunrealtype));
+    memcpy(rmem->beta_eig, BETA7, 3 * sizeof(sunrealtype));
+    memcpy(rmem->T_mat, T7, 49 * sizeof(sunrealtype));
+    memcpy(rmem->TI_mat, TI7, 49 * sizeof(sunrealtype));
+
+    if (rmem->use_schur)
+    {
+      memcpy(rmem->US_mat, US7, 49 * sizeof(sunrealtype));
+      memcpy(rmem->TS_mat, TS7, 49 * sizeof(sunrealtype));
+      rmem->u1 = rmem->TS_mat[6*7+6]; /* TS[6][6] = real eigenvalue */
+      /* T = US, TI = US^T */
+      for (int i = 0; i < 7; i++)
+        for (int j = 0; j < 7; j++) {
+          rmem->T_mat[i*7+j] = rmem->US_mat[i*7+j];
+          rmem->TI_mat[i*7+j] = rmem->US_mat[j*7+i];
+        }
+    }
+  }
+  else
+  {
+    return RADAU5_ILL_INPUT;
+  }
 
   /* fnewt will be computed after tolerance transformation in Radau5Solve */
-  rmem->fnewt = SUN_RCONST(0.0);  /* sentinel: recompute later */
-
-  /* --- Schur decomposition constants ---
-   * If use_schur==1, populate US and TS from precomputed values,
-   * and set T/TI from US/US^T for the forward/back transforms.
-   * Also set u1 = TS[2][2] (the real eigenvalue for the 1×1 block). */
-  if (rmem->use_schur)
-  {
-    /* US: orthogonal Schur vectors (columns of US) */
-    rmem->US_mat[0] =  SUN_RCONST( 0.138665108751908);
-    rmem->US_mat[1] =  SUN_RCONST( 0.046278149309488);
-    rmem->US_mat[2] =  SUN_RCONST( 0.989257459163847);
-    rmem->US_mat[3] =  SUN_RCONST(-0.229641242351741);
-    rmem->US_mat[4] =  SUN_RCONST(-0.970178886551833);
-    rmem->US_mat[5] =  SUN_RCONST( 0.077574660168092);
-    rmem->US_mat[6] =  SUN_RCONST(-0.963346711950568);
-    rmem->US_mat[7] =  SUN_RCONST( 0.237931210616713);
-    rmem->US_mat[8] =  SUN_RCONST( 0.123902589111344);
-
-    /* TS: upper quasi-triangular Schur form */
-    rmem->TS_mat[0] =  SUN_RCONST( 2.68108287362775);
-    rmem->TS_mat[1] =  SUN_RCONST(-8.42387579808538);
-    rmem->TS_mat[2] =  SUN_RCONST(-4.08857781305964);
-    rmem->TS_mat[3] =  SUN_RCONST( 1.10461319985220);
-    rmem->TS_mat[4] =  SUN_RCONST( 2.68108287362775);
-    rmem->TS_mat[5] =  SUN_RCONST( 4.70015200634394);
-    rmem->TS_mat[6] =  SUN_RCONST( 0.0);
-    rmem->TS_mat[7] =  SUN_RCONST( 0.0);
-    rmem->TS_mat[8] =  SUN_RCONST( 3.63783425274450);
-
-    /* Override eigenvalue scalings:
-     * u1 = TS[2][2] (real eigenvalue, used as fac1 = u1/h for E1)
-     * alph/beta are not used directly — E2 is built from TS[0:2][0:2] block */
-    rmem->u1 = rmem->TS_mat[8];
-
-    /* Set T = US and TI = US^T for the Newton transforms.
-     * Note: with Schur, T32 and T33 are NOT 1 and 0. We use the
-     * full 3×3 T matrix. The Newton back-transform must handle this. */
-    rmem->T_mat[0] = rmem->US_mat[0];
-    rmem->T_mat[1] = rmem->US_mat[1];
-    rmem->T_mat[2] = rmem->US_mat[2];
-    rmem->T_mat[3] = rmem->US_mat[3];
-    rmem->T_mat[4] = rmem->US_mat[4];
-    rmem->T_mat[5] = rmem->US_mat[5];
-    rmem->T_mat[6] = rmem->US_mat[6];
-    /* T32, T33 not stored as separate fields in the eigenvalue path
-     * (T32=1, T33=0 implicit). For Schur, we handle them in the
-     * Newton code using US[][] directly. */
-
-    rmem->TI_mat[0] = rmem->US_mat[0];  /* US^T row 0 = US col 0 */
-    rmem->TI_mat[1] = rmem->US_mat[3];
-    rmem->TI_mat[2] = rmem->US_mat[6];
-    rmem->TI_mat[3] = rmem->US_mat[1];  /* US^T row 1 = US col 1 */
-    rmem->TI_mat[4] = rmem->US_mat[4];
-    rmem->TI_mat[5] = rmem->US_mat[7];
-    rmem->TI_mat[6] = rmem->US_mat[2];  /* US^T row 2 = US col 2 */
-    rmem->TI_mat[7] = rmem->US_mat[5];
-    rmem->TI_mat[8] = rmem->US_mat[8];
-  }
+  rmem->fnewt = SUN_RCONST(0.0);
 
   return RADAU5_SUCCESS;
 }
