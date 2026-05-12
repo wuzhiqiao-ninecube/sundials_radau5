@@ -1,364 +1,346 @@
 /* ---------------------------------------------------------------------------
- * RADAU5 — simplified Newton iteration
+ * RADAU5 — Generalized Newton iteration for variable-order (ns=3,5,7)
  *
- * Implements radau5_Newton(), which performs the inner Newton loop for the
- * 3-stage Radau IIA collocation system.  E1 and E2 must already be factored
- * before this routine is called.
+ * Implements radau5_Newton() for arbitrary ns stages. The stage ordering is:
+ *   z[0]/f[0] = real eigenvalue component (solved with E1)
+ *   z[2k+1]/f[2k+1], z[2k+2]/f[2k+2] = complex pair k (solved with E2[k])
  *
- * Reference: Hairer & Wanner, "Solving ODEs II", Fortran RADCOR lines 906-985
- *            and subroutine SLVRAD / SLVRAI.
+ * This matches the Fortran T/TI matrix layout where row 0 corresponds to
+ * the real eigenvalue and rows 1,2 / 3,4 / 5,6 to complex pairs.
+ *
+ * Reference: Hairer & Wanner, "Solving ODEs II", Fortran radau.f
  * ---------------------------------------------------------------------------*/
 
 #include <math.h>
+#include <stdlib.h>
 #include <sundials/sundials_math.h>
 #include <nvector/nvector_serial.h>
 #include "radau5_impl.h"
 
 int radau5_Newton(Radau5Mem rmem, int* newt_out)
 {
-  /* -------------------------------------------------------------------------
-   * Unpack frequently used fields
-   * -----------------------------------------------------------------------*/
-  sunindextype n        = rmem->n;
-  sunrealtype  h        = rmem->h;
-  sunrealtype  tn       = rmem->tn;
-  sunrealtype  uround   = SUN_UNIT_ROUNDOFF;
-
-  /* Collocation nodes */
-  sunrealtype c1 = rmem->c[0];
-  sunrealtype c2 = rmem->c[1];
-
-  /* Eigenvalue scalings */
-  sunrealtype u1   = rmem->u1;
-  sunrealtype alph = rmem->alph[0];
-  sunrealtype beta = rmem->beta_eig[0];
-
-  /* Transformation matrices */
-  sunrealtype TI11 = rmem->TI_mat[0], TI12 = rmem->TI_mat[1], TI13 = rmem->TI_mat[2];
-  sunrealtype TI21 = rmem->TI_mat[3], TI22 = rmem->TI_mat[4], TI23 = rmem->TI_mat[5];
-  sunrealtype TI31 = rmem->TI_mat[6], TI32 = rmem->TI_mat[7], TI33 = rmem->TI_mat[8];
-
-  sunrealtype T11 = rmem->T_mat[0], T12 = rmem->T_mat[1], T13 = rmem->T_mat[2];
-  sunrealtype T21 = rmem->T_mat[3], T22 = rmem->T_mat[4], T23 = rmem->T_mat[5];
-  sunrealtype T31 = rmem->T_mat[6]; /* T32 = 1, T33 = 0 (implicit) */
+  sunindextype n  = rmem->n;
+  sunrealtype  h  = rmem->h;
+  sunrealtype  tn = rmem->tn;
+  int ns     = rmem->ns;
+  int npairs = rmem->npairs;
 
   /* Newton control */
-  int          nit   = rmem->nit;
-  sunrealtype  fnewt = rmem->fnewt;
+  int         nit   = rmem->nit;
+  sunrealtype fnewt = rmem->fnewt;
+  sunrealtype uround = SUN_UNIT_ROUNDOFF;
 
-  /* Working vectors */
   N_Vector ycur = rmem->ycur;
-  N_Vector z1   = rmem->z[0];
-  N_Vector z2   = rmem->z[1];
-  N_Vector z3   = rmem->z[2];
-  N_Vector f1   = rmem->f[0];
-  N_Vector f2   = rmem->f[1];
-  N_Vector f3   = rmem->f[2];
   N_Vector tmp1 = rmem->tmp1;
   N_Vector scal = rmem->scal;
-  N_Vector rhs2 = rmem->rhs2[0];
-  N_Vector sol2 = rmem->sol2[0];
-
-  /* Raw data pointers (set inside loop) */
-  sunrealtype *z1_data, *z2_data, *z3_data;
-  sunrealtype *f1_data, *f2_data, *f3_data;
-  sunrealtype *scal_data, *rhs2_data, *sol2_data;
 
   /* Convergence tracking */
-  sunrealtype faccon  = SUNMAX(rmem->faccon, uround);
+  sunrealtype faccon = SUNMAX(rmem->faccon, uround);
   faccon = SUNRpowerR(faccon, SUN_RCONST(0.8));
-  sunrealtype theta   = SUNRabs(rmem->thet);
-  sunrealtype dynold  = SUN_RCONST(1.0);   /* initialised before first use */
-  sunrealtype thqold  = SUN_RCONST(0.0);
-  sunrealtype dyno    = SUN_RCONST(0.0);
+  sunrealtype theta  = SUNRabs(rmem->thet);
+  sunrealtype dynold = SUN_RCONST(1.0);
+  sunrealtype thqold = SUN_RCONST(0.0);
+  sunrealtype dyno   = SUN_RCONST(0.0);
 
   int newt = 0;
 
+  /* Temporary buffer for mass-mult results */
+  sunrealtype mf_stack[1024];
+  sunrealtype *mf_buf = (n <= 1024) ? mf_stack
+                       : (sunrealtype*)malloc((size_t)n * sizeof(sunrealtype));
+
   /* =========================================================================
-   * Newton loop (Fortran label 40)
+   * Newton loop
    * =======================================================================*/
   while (1)
   {
     if (newt >= nit)
     {
       *newt_out = newt;
+      if (n > 1024) free(mf_buf);
       return RADAU5_CONV_FAILURE;
     }
 
     /* ------------------------------------------------------------------
-     * 1. Evaluate RHS at the three collocation points.
-     *    On entry z1,z2,z3 hold the current stage increments Z_i.
-     *    After the calls they hold f(t+c_i*h, y+Z_i).
+     * 1. Evaluate RHS at all ns collocation points.
+     *    z[k] holds current stage increment Z_k.
+     *    After: z[k] = f(t + c[k]*h, y + Z_k)
      * ----------------------------------------------------------------*/
-    /* z1 <- f(t+c1*h, y+Z1) */
-    N_VLinearSum(SUN_RCONST(1.0), ycur, SUN_RCONST(1.0), z1, tmp1);
+    for (int k = 0; k < ns; k++)
     {
-      int rhsret = rmem->rhs(tn + c1 * h, tmp1, z1, rmem->user_data);
-      if (rhsret < 0) return RADAU5_RHSFUNC_FAIL;
-      if (rhsret > 0) return RADAU5_RHSFUNC_RECVR;
+      N_VLinearSum(SUN_RCONST(1.0), ycur, SUN_RCONST(1.0), rmem->z[k], tmp1);
+      sunrealtype tk = tn + rmem->c[k] * h;
+      int rhsret = rmem->rhs(tk, tmp1, rmem->z[k], rmem->user_data);
+      if (rhsret < 0) { if (n > 1024) free(mf_buf); return RADAU5_RHSFUNC_FAIL; }
+      if (rhsret > 0) { if (n > 1024) free(mf_buf); return RADAU5_RHSFUNC_RECVR; }
     }
-
-    /* z2 <- f(t+c2*h, y+Z2) */
-    N_VLinearSum(SUN_RCONST(1.0), ycur, SUN_RCONST(1.0), z2, tmp1);
-    {
-      int rhsret = rmem->rhs(tn + c2 * h, tmp1, z2, rmem->user_data);
-      if (rhsret < 0) return RADAU5_RHSFUNC_FAIL;
-      if (rhsret > 0) return RADAU5_RHSFUNC_RECVR;
-    }
-
-    /* z3 <- f(t+h, y+Z3) */
-    N_VLinearSum(SUN_RCONST(1.0), ycur, SUN_RCONST(1.0), z3, tmp1);
-    {
-      int rhsret = rmem->rhs(tn + h, tmp1, z3, rmem->user_data);
-      if (rhsret < 0) return RADAU5_RHSFUNC_FAIL;
-      if (rhsret > 0) return RADAU5_RHSFUNC_RECVR;
-    }
-
-    rmem->nfcn += 3;
+    rmem->nfcn += ns;
 
     /* ------------------------------------------------------------------
-     * 2. Apply TI transform in-place.
-     *    z1,z2,z3 currently hold rhs values a1,a2,a3.
-     *    After: z_i = sum_j TI_{ij} * a_j
+     * 2. Apply TI forward transform in-place.
+     *    z[k] currently holds RHS values a[k].
+     *    After: z[k] = sum_j TI[k][j] * a[j]
      * ----------------------------------------------------------------*/
-    z1_data = N_VGetArrayPointer(z1);
-    z2_data = N_VGetArrayPointer(z2);
-    z3_data = N_VGetArrayPointer(z3);
-
-    for (sunindextype i = 0; i < n; i++)
     {
-      sunrealtype a1 = z1_data[i];
-      sunrealtype a2 = z2_data[i];
-      sunrealtype a3 = z3_data[i];
-      z1_data[i] = TI11 * a1 + TI12 * a2 + TI13 * a3;
-      z2_data[i] = TI21 * a1 + TI22 * a2 + TI23 * a3;
-      z3_data[i] = TI31 * a1 + TI32 * a2 + TI33 * a3;
+      sunrealtype a_vals[RADAU5_NS_MAX];
+      sunrealtype *zd[RADAU5_NS_MAX];
+      for (int k = 0; k < ns; k++)
+        zd[k] = N_VGetArrayPointer(rmem->z[k]);
+
+      for (sunindextype i = 0; i < n; i++)
+      {
+        for (int k = 0; k < ns; k++)
+          a_vals[k] = zd[k][i];
+        for (int k = 0; k < ns; k++)
+        {
+          sunrealtype sum = SUN_RCONST(0.0);
+          for (int j = 0; j < ns; j++)
+            sum += rmem->TI_mat[k * ns + j] * a_vals[j];
+          zd[k][i] = sum;
+        }
+      }
     }
 
     /* ------------------------------------------------------------------
-     * 3. Form linear-system RHS.
+     * 3. Form linear-system RHS (eigenvalue mode only for now).
      *
-     * Eigenvalue mode (use_schur==0):
-     *    For identity mass (M==NULL):
-     *      z1(i) -= fac1 * f1(i)
-     *      z2(i) += (-f2(i))*alphn - (-f3(i))*betan
-     *      z3(i) += (-f3(i))*alphn + (-f2(i))*betan
-     *
-     *    For general mass M (Fortran SLVRAD IJOB=3,5):
-     *      S_k = -(M * F_k)  for k=1,2,3
-     *      z1(i) += fac1  * S1(i)
-     *      z2(i) += alphn * S2(i) - betan * S3(i)
-     *      z3(i) += alphn * S3(i) + betan * S2(i)
-     *
-     * Schur mode (use_schur==1):
-     *    rhs1 = w1 - (TS[0][0]/h)*M*F1 - (TS[0][1]/h)*M*F2 - (TS[0][2]/h)*M*F3
-     *    rhs2 = w2 - (TS[1][0]/h)*M*F1 - (TS[1][1]/h)*M*F2 - (TS[1][2]/h)*M*F3
-     *    rhs3 = w3                                           - (TS[2][2]/h)*M*F3
-     *    Then block back-substitution:
-     *      Solve E1 * dF3 = rhs3
-     *      rhs1 -= (TS[0][2]/h)*M*dF3;  rhs2 -= (TS[1][2]/h)*M*dF3
-     *      Solve E2 * [dF1; dF2] = [rhs1; rhs2]
+     * Stage ordering:
+     *   z[0] = real eigenvalue: z[0] -= fac1 * M*f[0]
+     *   z[2k+1],z[2k+2] = complex pair k:
+     *     z[2k+1] += alphn[k]*S[2k+1] - betan[k]*S[2k+2]
+     *     z[2k+2] += alphn[k]*S[2k+2] + betan[k]*S[2k+1]
+     *   where S[j] = -(M * f[j])  (or -f[j] for identity mass)
      * ----------------------------------------------------------------*/
-    sunrealtype fac1   = u1   / h;
-    sunrealtype alphn  = alph / h;
-    sunrealtype betan  = beta / h;
+    sunrealtype fac1 = rmem->u1 / h;
 
-    f1_data = N_VGetArrayPointer(f1);
-    f2_data = N_VGetArrayPointer(f2);
-    f3_data = N_VGetArrayPointer(f3);
+    sunrealtype *fd[RADAU5_NS_MAX], *zd[RADAU5_NS_MAX];
+    for (int k = 0; k < ns; k++)
+    {
+      fd[k] = N_VGetArrayPointer(rmem->f[k]);
+      zd[k] = N_VGetArrayPointer(rmem->z[k]);
+    }
 
     if (rmem->use_schur)
     {
-      /* --- Schur mode: full TS row scalings + block back-substitution --- */
-      sunrealtype ts00 = rmem->TS_mat[0] / h;
-      sunrealtype ts01 = rmem->TS_mat[1] / h;
-      sunrealtype ts02 = rmem->TS_mat[2] / h;
-      sunrealtype ts10 = rmem->TS_mat[3] / h;
-      sunrealtype ts11 = rmem->TS_mat[4] / h;
-      sunrealtype ts12 = rmem->TS_mat[5] / h;
-      sunrealtype ts22 = rmem->TS_mat[8] / h;  /* = fac1 = u1/h */
+      /* --- Schur mode --- */
+      /* Form RHS: z[r] -= sum_j (TS[r][j]/h) * M*f[j] for upper-triangular TS */
+      sunrealtype *mf_ptrs[RADAU5_NS_MAX];
+      sunrealtype *mf_alloc = NULL;
 
       if (rmem->M != NULL)
       {
-        /* General mass: M * F_k products needed.
-         * We compute M*f3, M*f2, M*f1 sequentially, building the RHS. */
-        sunrealtype *mfd;
-
-        /* --- rhs3 = w3 - ts22*M*F3 --- */
-        radau5_MassMult(rmem, f3, tmp1);
-        mfd = N_VGetArrayPointer(tmp1);
-        for (sunindextype ii = 0; ii < n; ii++)
-          z3_data[ii] -= ts22 * mfd[ii];
-
-        /* Save M*F3 for the ts02, ts12 terms */
-        sunrealtype mf3_buf[1024];
-        sunrealtype *mf3_ptr = (n <= 1024) ? mf3_buf
-                              : (sunrealtype*)malloc((size_t)n * sizeof(sunrealtype));
-        for (sunindextype ii = 0; ii < n; ii++)
-          mf3_ptr[ii] = mfd[ii];
-
-        /* --- M*F2 -> apply to rhs1, rhs2 --- */
-        radau5_MassMult(rmem, f2, tmp1);
-        mfd = N_VGetArrayPointer(tmp1);
-        sunrealtype mf2_buf[1024];
-        sunrealtype *mf2_ptr = (n <= 1024) ? mf2_buf
-                              : (sunrealtype*)malloc((size_t)n * sizeof(sunrealtype));
-        for (sunindextype ii = 0; ii < n; ii++)
-          mf2_ptr[ii] = mfd[ii];
-
-        /* --- M*F1 -> apply to rhs1, rhs2 --- */
-        radau5_MassMult(rmem, f1, tmp1);
-        mfd = N_VGetArrayPointer(tmp1);
-
-        for (sunindextype ii = 0; ii < n; ii++)
+        mf_alloc = (sunrealtype*)malloc((size_t)(ns * n) * sizeof(sunrealtype));
+        for (int j = 0; j < ns; j++)
         {
-          z1_data[ii] -= ts00 * mfd[ii] + ts01 * mf2_ptr[ii] + ts02 * mf3_ptr[ii];
-          z2_data[ii] -= ts10 * mfd[ii] + ts11 * mf2_ptr[ii] + ts12 * mf3_ptr[ii];
-        }
-
-        if (n > 1024) { free(mf3_ptr); free(mf2_ptr); }
-      }
-      else
-      {
-        /* Identity mass: M = I, so M*F_k = F_k */
-        for (sunindextype ii = 0; ii < n; ii++)
-        {
-          z1_data[ii] -= ts00 * f1_data[ii] + ts01 * f2_data[ii] + ts02 * f3_data[ii];
-          z2_data[ii] -= ts10 * f1_data[ii] + ts11 * f2_data[ii] + ts12 * f3_data[ii];
-          z3_data[ii] -= ts22 * f3_data[ii];
-        }
-      }
-
-      /* ------------------------------------------------------------------
-       * Block back-substitution:
-       * Step A: Solve E1 * dF3 = rhs3 (z3 holds rhs3, result in z3)
-       * ----------------------------------------------------------------*/
-      if (SUNLinSolSolve(rmem->LS_E1, rmem->E1, z3, z3, SUN_RCONST(0.0)) != 0)
-        return RADAU5_LSOLVE_FAIL;
-
-      /* Step B: rhs1 -= ts02*M*dF3;  rhs2 -= ts12*M*dF3
-       * z3 now holds dF3 */
-      if (rmem->M != NULL)
-      {
-        radau5_MassMult(rmem, z3, tmp1);
-        sunrealtype *mdf3 = N_VGetArrayPointer(tmp1);
-        for (sunindextype ii = 0; ii < n; ii++)
-        {
-          z1_data[ii] -= ts02 * mdf3[ii];
-          z2_data[ii] -= ts12 * mdf3[ii];
+          mf_ptrs[j] = mf_alloc + j * n;
+          radau5_MassMult(rmem, rmem->f[j], tmp1);
+          sunrealtype *td = N_VGetArrayPointer(tmp1);
+          for (sunindextype ii = 0; ii < n; ii++)
+            mf_ptrs[j][ii] = td[ii];
         }
       }
       else
       {
+        for (int j = 0; j < ns; j++)
+          mf_ptrs[j] = fd[j];
+      }
+
+      /* Apply TS row scalings (TS is quasi-triangular, NOT upper triangular) */
+      for (int r = 0; r < ns; r++)
+      {
         for (sunindextype ii = 0; ii < n; ii++)
         {
-          z1_data[ii] -= ts02 * z3_data[ii];
-          z2_data[ii] -= ts12 * z3_data[ii];
+          sunrealtype sum = SUN_RCONST(0.0);
+          for (int j = 0; j < ns; j++)
+          {
+            sunrealtype tsrj = rmem->TS_mat[r * ns + j];
+            if (tsrj != SUN_RCONST(0.0))
+              sum += (tsrj / h) * mf_ptrs[j][ii];
+          }
+          zd[r][ii] -= sum;
         }
       }
 
-      /* Step C: Solve E2 * [dF1; dF2] = [rhs1; rhs2] */
-      rhs2_data = N_VGetArrayPointer(rhs2);
-      for (sunindextype ii = 0; ii < n; ii++)
+      /* Block back-substitution:
+       * 1. Solve E1 for z[ns-1] (1×1 block at bottom-right) */
+      if (SUNLinSolSolve(rmem->LS_E1, rmem->E1, rmem->z[ns-1], rmem->z[ns-1],
+                         SUN_RCONST(0.0)) != 0)
       {
-        rhs2_data[ii]     = z1_data[ii];
-        rhs2_data[ii + n] = z2_data[ii];
-      }
-
-      if (SUNLinSolSolve(rmem->LS_E2[0], rmem->E2[0], sol2, rhs2, SUN_RCONST(0.0)) != 0)
+        if (mf_alloc) free(mf_alloc);
+        if (n > 1024) free(mf_buf);
         return RADAU5_LSOLVE_FAIL;
-
-      sol2_data = N_VGetArrayPointer(sol2);
-      for (sunindextype ii = 0; ii < n; ii++)
-      {
-        z1_data[ii] = sol2_data[ii];
-        z2_data[ii] = sol2_data[ii + n];
       }
 
-      /* z3 already holds dF3 from Step A */
+      /* 2. Back-substitute z[ns-1] into earlier rows */
+      {
+        sunrealtype *df_last;
+        if (rmem->M != NULL)
+        {
+          radau5_MassMult(rmem, rmem->z[ns-1], tmp1);
+          df_last = N_VGetArrayPointer(tmp1);
+        }
+        else
+          df_last = N_VGetArrayPointer(rmem->z[ns-1]);
 
+        for (int r = 0; r < ns - 1; r++)
+        {
+          sunrealtype coeff = rmem->TS_mat[r * ns + (ns - 1)] / h;
+          if (coeff != SUN_RCONST(0.0))
+            for (sunindextype ii = 0; ii < n; ii++)
+              zd[r][ii] -= coeff * df_last[ii];
+        }
+      }
+
+      /* 3. Solve each 2×2 block from bottom pair to top */
+      for (int pk = npairs - 1; pk >= 0; pk--)
+      {
+        int r0 = 2 * pk, r1 = r0 + 1;
+
+        sunrealtype *rhs2d = N_VGetArrayPointer(rmem->rhs2[pk]);
+        for (sunindextype ii = 0; ii < n; ii++)
+        {
+          rhs2d[ii]     = zd[r0][ii];
+          rhs2d[ii + n] = zd[r1][ii];
+        }
+
+        if (SUNLinSolSolve(rmem->LS_E2[pk], rmem->E2[pk], rmem->sol2[pk],
+                           rmem->rhs2[pk], SUN_RCONST(0.0)) != 0)
+        {
+          if (mf_alloc) free(mf_alloc);
+          if (n > 1024) free(mf_buf);
+          return RADAU5_LSOLVE_FAIL;
+        }
+
+        sunrealtype *sol2d = N_VGetArrayPointer(rmem->sol2[pk]);
+        for (sunindextype ii = 0; ii < n; ii++)
+        {
+          zd[r0][ii] = sol2d[ii];
+          zd[r1][ii] = sol2d[ii + n];
+        }
+
+        /* Back-substitute into earlier rows */
+        if (pk > 0)
+        {
+          for (int sc = r0; sc <= r1; sc++)
+          {
+            sunrealtype *df_col;
+            if (rmem->M != NULL)
+            {
+              radau5_MassMult(rmem, rmem->z[sc], tmp1);
+              df_col = N_VGetArrayPointer(tmp1);
+            }
+            else
+              df_col = zd[sc];
+
+            for (int r = 0; r < r0; r++)
+            {
+              sunrealtype coeff = rmem->TS_mat[r * ns + sc] / h;
+              if (coeff != SUN_RCONST(0.0))
+                for (sunindextype ii = 0; ii < n; ii++)
+                  zd[r][ii] -= coeff * df_col[ii];
+            }
+          }
+        }
+      }
+
+      if (mf_alloc) free(mf_alloc);
       rmem->nsol++;
       newt++;
     }
     else
     {
-      /* --- Eigenvalue mode (original) --- */
+      /* --- Eigenvalue mode --- */
       if (rmem->M != NULL)
       {
-        /* General mass matrix: compute S_k = -(M * F_k) using tmp vectors. */
-        sunrealtype *s1d, *s2d, *s3d;
-
-        /* S1 = -(M * f1) */
-        radau5_MassMult(rmem, f1, tmp1);
-        s1d = N_VGetArrayPointer(tmp1);
-
-        /* Apply S1 to z1 */
+        /* General mass: S[j] = -(M * f[j]) */
+        /* Real eigenvalue: z[0] -= fac1 * M*f[0] */
+        radau5_MassMult(rmem, rmem->f[0], tmp1);
+        sunrealtype *mfd = N_VGetArrayPointer(tmp1);
         for (sunindextype ii = 0; ii < n; ii++)
-          z1_data[ii] += fac1 * (-s1d[ii]);
+          zd[0][ii] -= fac1 * mfd[ii];
 
-        /* S2 = -(M * f2) → store in tmp1 */
-        radau5_MassMult(rmem, f2, tmp1);
-        s2d = N_VGetArrayPointer(tmp1);
-
-        sunrealtype s2_buf[1024];
-        sunrealtype *s2_ptr = (n <= 1024) ? s2_buf
-                              : (sunrealtype*)malloc((size_t)n * sizeof(sunrealtype));
-        for (sunindextype ii = 0; ii < n; ii++)
-          s2_ptr[ii] = -s2d[ii];
-
-        /* S3 = -(M * f3) → store in tmp1 */
-        radau5_MassMult(rmem, f3, tmp1);
-        s3d = N_VGetArrayPointer(tmp1);
-
-        for (sunindextype ii = 0; ii < n; ii++)
+        /* Complex pairs */
+        for (int pk = 0; pk < npairs; pk++)
         {
-          sunrealtype s2_i = s2_ptr[ii];
-          sunrealtype s3_i = -s3d[ii];
-          z2_data[ii] += alphn * s2_i - betan * s3_i;
-          z3_data[ii] += alphn * s3_i + betan * s2_i;
-        }
+          int r0 = 2 * pk + 1, r1 = r0 + 1;
+          sunrealtype alphn_k = rmem->alph[pk] / h;
+          sunrealtype betan_k = rmem->beta_eig[pk] / h;
 
-        if (n > 1024) free(s2_ptr);
+          /* S[r0] = -(M * f[r0]) */
+          radau5_MassMult(rmem, rmem->f[r0], tmp1);
+          mfd = N_VGetArrayPointer(tmp1);
+          for (sunindextype ii = 0; ii < n; ii++)
+            mf_buf[ii] = -mfd[ii];
+
+          /* S[r1] = -(M * f[r1]) */
+          radau5_MassMult(rmem, rmem->f[r1], tmp1);
+          mfd = N_VGetArrayPointer(tmp1);
+
+          for (sunindextype ii = 0; ii < n; ii++)
+          {
+            sunrealtype s_r0 = mf_buf[ii];
+            sunrealtype s_r1 = -mfd[ii];
+            zd[r0][ii] += alphn_k * s_r0 - betan_k * s_r1;
+            zd[r1][ii] += alphn_k * s_r1 + betan_k * s_r0;
+          }
+        }
       }
       else
       {
-        /* Identity mass: S_k = -F_k */
+        /* Identity mass: S[j] = -f[j] */
+        /* Real eigenvalue: z[0] -= fac1 * f[0] */
         for (sunindextype ii = 0; ii < n; ii++)
-        {
-          z1_data[ii] -= fac1 * f1_data[ii];
+          zd[0][ii] -= fac1 * fd[0][ii];
 
-          sunrealtype s2 = -f2_data[ii];
-          sunrealtype s3 = -f3_data[ii];
-          z2_data[ii] += s2 * alphn - s3 * betan;
-          z3_data[ii] += s3 * alphn + s2 * betan;
+        /* Complex pairs */
+        for (int pk = 0; pk < npairs; pk++)
+        {
+          int r0 = 2 * pk + 1, r1 = r0 + 1;
+          sunrealtype alphn_k = rmem->alph[pk] / h;
+          sunrealtype betan_k = rmem->beta_eig[pk] / h;
+
+          for (sunindextype ii = 0; ii < n; ii++)
+          {
+            sunrealtype s_r0 = -fd[r0][ii];
+            sunrealtype s_r1 = -fd[r1][ii];
+            zd[r0][ii] += alphn_k * s_r0 - betan_k * s_r1;
+            zd[r1][ii] += alphn_k * s_r1 + betan_k * s_r0;
+          }
         }
       }
 
-      /* ------------------------------------------------------------------
-       * 4. Solve E1 * dz1 = z1  (result overwrites z1)
-       * ----------------------------------------------------------------*/
-      if (SUNLinSolSolve(rmem->LS_E1, rmem->E1, z1, z1, SUN_RCONST(0.0)) != 0)
-        return RADAU5_LSOLVE_FAIL;
-
-      /* ------------------------------------------------------------------
-       * 5. Solve E2 * [dz2; dz3] = [z2; z3]
-       *    Pack into the 2n vector rhs2, solve into sol2, then unpack.
-       * ----------------------------------------------------------------*/
-      rhs2_data = N_VGetArrayPointer(rhs2);
-      for (sunindextype ii = 0; ii < n; ii++)
+      /* Solve E1 for z[0] (real eigenvalue) */
+      if (SUNLinSolSolve(rmem->LS_E1, rmem->E1, rmem->z[0], rmem->z[0],
+                         SUN_RCONST(0.0)) != 0)
       {
-        rhs2_data[ii]     = z2_data[ii];
-        rhs2_data[ii + n] = z3_data[ii];
+        if (n > 1024) free(mf_buf);
+        return RADAU5_LSOLVE_FAIL;
       }
 
-      if (SUNLinSolSolve(rmem->LS_E2[0], rmem->E2[0], sol2, rhs2, SUN_RCONST(0.0)) != 0)
-        return RADAU5_LSOLVE_FAIL;
-
-      sol2_data = N_VGetArrayPointer(sol2);
-      for (sunindextype ii = 0; ii < n; ii++)
+      /* Solve E2[pk] for each complex pair */
+      for (int pk = 0; pk < npairs; pk++)
       {
-        z2_data[ii] = sol2_data[ii];
-        z3_data[ii] = sol2_data[ii + n];
+        int r0 = 2 * pk + 1, r1 = r0 + 1;
+        sunrealtype *rhs2d = N_VGetArrayPointer(rmem->rhs2[pk]);
+        for (sunindextype ii = 0; ii < n; ii++)
+        {
+          rhs2d[ii]     = zd[r0][ii];
+          rhs2d[ii + n] = zd[r1][ii];
+        }
+
+        if (SUNLinSolSolve(rmem->LS_E2[pk], rmem->E2[pk], rmem->sol2[pk],
+                           rmem->rhs2[pk], SUN_RCONST(0.0)) != 0)
+        {
+          if (n > 1024) free(mf_buf);
+          return RADAU5_LSOLVE_FAIL;
+        }
+
+        sunrealtype *sol2d = N_VGetArrayPointer(rmem->sol2[pk]);
+        for (sunindextype ii = 0; ii < n; ii++)
+        {
+          zd[r0][ii] = sol2d[ii];
+          zd[r1][ii] = sol2d[ii + n];
+        }
       }
 
       rmem->nsol++;
@@ -366,21 +348,25 @@ int radau5_Newton(Radau5Mem rmem, int* newt_out)
     } /* end eigenvalue/schur mode */
 
     /* ------------------------------------------------------------------
-     * 6. Convergence norm  (RMS over all 3n components, scaled)
+     * 4. Convergence norm (RMS over all ns*n components, scaled)
      * ----------------------------------------------------------------*/
-    scal_data = N_VGetArrayPointer(scal);
-    dyno = SUN_RCONST(0.0);
-    for (sunindextype i = 0; i < n; i++)
     {
-      sunrealtype denom = scal_data[i];
-      dyno += (z1_data[i] / denom) * (z1_data[i] / denom)
-            + (z2_data[i] / denom) * (z2_data[i] / denom)
-            + (z3_data[i] / denom) * (z3_data[i] / denom);
+      sunrealtype *scal_data = N_VGetArrayPointer(scal);
+      dyno = SUN_RCONST(0.0);
+      for (sunindextype i = 0; i < n; i++)
+      {
+        sunrealtype denom = scal_data[i];
+        for (int k = 0; k < ns; k++)
+        {
+          sunrealtype val = zd[k][i] / denom;
+          dyno += val * val;
+        }
+      }
+      dyno = SUNRsqrt(dyno / ((sunrealtype)ns * (sunrealtype)n));
     }
-    dyno = SUNRsqrt(dyno / (SUN_RCONST(3.0) * (sunrealtype)n));
 
     /* ------------------------------------------------------------------
-     * 7. Convergence monitoring (Fortran lines 949-972)
+     * 5. Convergence monitoring
      * ----------------------------------------------------------------*/
     if (newt > 1 && newt < nit)
     {
@@ -401,11 +387,6 @@ int radau5_Newton(Radau5Mem rmem, int* newt_out)
                          / fnewt;
         if (dyth >= SUN_RCONST(1.0))
         {
-          /* Predict required step-size reduction and signal retry.
-           * The Fortran code reduces h here and goes directly to
-           * label 20 or 10 (NOT label 78). We signal this with
-           * RADAU5_NEWT_PREDICT so the caller skips the label78
-           * h *= 0.5 reduction. */
           sunrealtype qnewt = SUNMAX(SUN_RCONST(1.0e-4),
                                      SUNMIN(SUN_RCONST(20.0), dyth));
           rmem->hhfac = SUN_RCONST(0.8)
@@ -417,13 +398,14 @@ int radau5_Newton(Radau5Mem rmem, int* newt_out)
           rmem->reject = 1;
           rmem->last   = 0;
           *newt_out    = newt;
+          if (n > 1024) free(mf_buf);
           return RADAU5_NEWT_PREDICT;
         }
       }
       else
       {
-        /* theta >= 0.99: diverging */
         *newt_out = newt;
+        if (n > 1024) free(mf_buf);
         return RADAU5_CONV_FAILURE;
       }
     }
@@ -431,73 +413,46 @@ int radau5_Newton(Radau5Mem rmem, int* newt_out)
     dynold = SUNMAX(dyno, uround);
 
     /* ------------------------------------------------------------------
-     * 8. Update F1,F2,F3 (TI-space increments) and back-transform to
-     *    Z1,Z2,Z3 (physical-space stage increments).
-     *
-     *    f_i += dz_i   (accumulate Newton correction in TI space)
-     *
-     *    Eigenvalue mode:
-     *      Z1 = T11*f1 + T12*f2 + T13*f3
-     *      Z2 = T21*f1 + T22*f2 + T23*f3
-     *      Z3 = T31*f1 +      f2            (T32=1, T33=0)
-     *
-     *    Schur mode (T = US, full 3×3):
-     *      Z1 = US[0][0]*f1 + US[0][1]*f2 + US[0][2]*f3
-     *      Z2 = US[1][0]*f1 + US[1][1]*f2 + US[1][2]*f3
-     *      Z3 = US[2][0]*f1 + US[2][1]*f2 + US[2][2]*f3
+     * 6. Update f[k] and back-transform to z[k].
+     *    f[k] += dz[k]  (accumulate Newton correction in TI space)
+     *    Z[r] = sum_j T[r][j] * f[j]  (back-transform to physical space)
      * ----------------------------------------------------------------*/
-    if (rmem->use_schur)
     {
-      sunrealtype US00 = rmem->US_mat[0], US01 = rmem->US_mat[1], US02 = rmem->US_mat[2];
-      sunrealtype US10 = rmem->US_mat[3], US11 = rmem->US_mat[4], US12 = rmem->US_mat[5];
-      sunrealtype US20 = rmem->US_mat[6], US21 = rmem->US_mat[7], US22 = rmem->US_mat[8];
-
+      sunrealtype f_vals[RADAU5_NS_MAX];
       for (sunindextype ii = 0; ii < n; ii++)
       {
-        sunrealtype f1i = f1_data[ii] + z1_data[ii];
-        sunrealtype f2i = f2_data[ii] + z2_data[ii];
-        sunrealtype f3i = f3_data[ii] + z3_data[ii];
+        for (int k = 0; k < ns; k++)
+          f_vals[k] = fd[k][ii] + zd[k][ii];
 
-        f1_data[ii] = f1i;
-        f2_data[ii] = f2i;
-        f3_data[ii] = f3i;
+        /* Store updated f values */
+        for (int k = 0; k < ns; k++)
+          fd[k][ii] = f_vals[k];
 
-        z1_data[ii] = US00 * f1i + US01 * f2i + US02 * f3i;
-        z2_data[ii] = US10 * f1i + US11 * f2i + US12 * f3i;
-        z3_data[ii] = US20 * f1i + US21 * f2i + US22 * f3i;
-      }
-    }
-    else
-    {
-      for (sunindextype ii = 0; ii < n; ii++)
-      {
-        sunrealtype f1i = f1_data[ii] + z1_data[ii];
-        sunrealtype f2i = f2_data[ii] + z2_data[ii];
-        sunrealtype f3i = f3_data[ii] + z3_data[ii];
-
-        f1_data[ii] = f1i;
-        f2_data[ii] = f2i;
-        f3_data[ii] = f3i;
-
-        z1_data[ii] = T11 * f1i + T12 * f2i + T13 * f3i;
-        z2_data[ii] = T21 * f1i + T22 * f2i + T23 * f3i;
-        z3_data[ii] = T31 * f1i +       f2i;  /* T32=1, T33=0 */
+        /* Back-transform: Z[r] = sum_j T[r][j] * f[j] */
+        for (int r = 0; r < ns; r++)
+        {
+          sunrealtype sum = SUN_RCONST(0.0);
+          for (int j = 0; j < ns; j++)
+            sum += rmem->T_mat[r * ns + j] * f_vals[j];
+          zd[r][ii] = sum;
+        }
       }
     }
 
     /* ------------------------------------------------------------------
-     * 9. Check convergence
+     * 7. Check convergence
      * ----------------------------------------------------------------*/
     if (faccon * dyno <= fnewt)
       break; /* converged */
 
   } /* end Newton loop */
 
-  /* Store updated state back into rmem */
+  /* Store updated state */
   rmem->faccon = faccon;
   rmem->theta  = theta;
   *newt_out    = newt;
   rmem->nnewt += newt;
 
+  if (n > 1024) free(mf_buf);
   return RADAU5_SUCCESS;
 }
