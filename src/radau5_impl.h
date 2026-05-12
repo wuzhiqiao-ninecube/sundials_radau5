@@ -49,17 +49,18 @@ typedef struct Radau5Mem_
   SUNMatrix E1;
   SUNLinearSolver LS_E1;
 
-  /* Realified complex system E2 (2n×2n) */
-  SUNMatrix E2;
-  SUNLinearSolver LS_E2;
+  /* Realified complex systems E2 (2n×2n) — one per complex eigenvalue pair */
+  SUNMatrix E2[RADAU5_NPAIRS_MAX];
+  SUNLinearSolver LS_E2[RADAU5_NPAIRS_MAX];
 
-  /* Stage increments Z_i = Y_i - y */
-  N_Vector z1, z2, z3;
+  /* Stage increments Z_i = Y_i - y
+   * Ordering: z[0]=real eigenvalue, z[1],z[2]=complex pair 0, etc. */
+  N_Vector z[RADAU5_NS_MAX];
   /* Transformed stage increments in TI-space */
-  N_Vector f1, f2, f3;
+  N_Vector f[RADAU5_NS_MAX];
 
-  /* Continuous output coefficients (4 vectors of length n) */
-  N_Vector cont1, cont2, cont3, cont4;
+  /* Continuous output: cont[0]=ycur copy, cont[1..ns]=divided-diff coeffs */
+  N_Vector cont[RADAU5_NS_MAX + 1];
 
   /* Error weight vector: scal_i = atol_i + rtol_i * |y_i| */
   N_Vector scal;
@@ -68,10 +69,10 @@ typedef struct Radau5Mem_
   /* Scratch vectors */
   N_Vector tmp1, tmp2, tmp3;
 
-  /* For realified complex solve (length 2n) */
-  N_Vector rhs2, sol2;
-  /* Template vector of length 2n for LS_E2 creation */
-  N_Vector y2n;
+  /* For realified complex solve (length 2n) — one per pair */
+  N_Vector rhs2[RADAU5_NPAIRS_MAX];
+  N_Vector sol2[RADAU5_NPAIRS_MAX];
+  N_Vector y2n[RADAU5_NPAIRS_MAX];
 
   /* DAE support */
   N_Vector id; /* differential/algebraic indicator (NULL if ODE) */
@@ -83,24 +84,19 @@ typedef struct Radau5Mem_
   N_Vector atol_v;    /* vector atol (NULL if scalar) */
   int itol;           /* 0=scalar, 1=vector */
 
-  /* Method constants (Radau IIA, 3-stage, order 5) */
-  sunrealtype c1, c2;       /* collocation nodes */
-  sunrealtype c1m1, c2m1;   /* c1-1, c2-1 */
-  sunrealtype c1mc2;         /* c1-c2 */
-  sunrealtype u1, alph, beta; /* eigenvalues of A^{-1} */
-  sunrealtype T11, T12, T13;
-  sunrealtype T21, T22, T23;
-  sunrealtype T31;           /* T32=1, T33=0 implicit in Fortran */
-  sunrealtype TI11, TI12, TI13;
-  sunrealtype TI21, TI22, TI23;
-  sunrealtype TI31, TI32, TI33;
-  sunrealtype dd1, dd2, dd3; /* error estimation coefficients */
+  /* Method constants (variable-order Radau IIA, ns=3,5,7) */
+  sunrealtype c[RADAU5_NS_MAX];         /* collocation nodes [ns] */
+  sunrealtype dd[RADAU5_NS_MAX];        /* error estimation coefficients [ns] */
+  sunrealtype u1;                        /* real eigenvalue of A^{-1} */
+  sunrealtype alph[RADAU5_NPAIRS_MAX];  /* complex eigenvalue real parts */
+  sunrealtype beta_eig[RADAU5_NPAIRS_MAX]; /* complex eigenvalue imag parts */
+  sunrealtype T_mat[RADAU5_NS_MAX * RADAU5_NS_MAX];   /* T[ns*ns] row-major */
+  sunrealtype TI_mat[RADAU5_NS_MAX * RADAU5_NS_MAX];  /* TI[ns*ns] row-major */
 
-  /* Schur decomposition option: A_inv = US * TS * US'
-   * US is orthogonal, TS is upper quasi-triangular (2×2 block + 1×1). */
-  int use_schur;              /* 0 = eigenvalue (default), 1 = Schur */
-  sunrealtype US[3][3];       /* orthogonal Schur vectors */
-  sunrealtype TS[3][3];       /* upper quasi-triangular Schur form */
+  /* Schur decomposition option */
+  int use_schur;
+  sunrealtype US_mat[RADAU5_NS_MAX * RADAU5_NS_MAX];  /* Schur vectors */
+  sunrealtype TS_mat[RADAU5_NS_MAX * RADAU5_NS_MAX];  /* Schur form */
 
   /* Step size control */
   sunrealtype h;

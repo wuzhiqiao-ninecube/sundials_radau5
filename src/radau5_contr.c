@@ -20,20 +20,20 @@ void radau5_UpdateContinuousOutput(Radau5Mem rmem)
 {
   sunindextype i, n = rmem->n;
 
-  sunrealtype* z1    = N_VGetArrayPointer(rmem->z1);
-  sunrealtype* z2    = N_VGetArrayPointer(rmem->z2);
-  sunrealtype* z3    = N_VGetArrayPointer(rmem->z3);
+  sunrealtype* z1    = N_VGetArrayPointer(rmem->z[0]);
+  sunrealtype* z2    = N_VGetArrayPointer(rmem->z[1]);
+  sunrealtype* z3    = N_VGetArrayPointer(rmem->z[2]);
   sunrealtype* ycur  = N_VGetArrayPointer(rmem->ycur);
-  sunrealtype* cont1 = N_VGetArrayPointer(rmem->cont1);
-  sunrealtype* cont2 = N_VGetArrayPointer(rmem->cont2);
-  sunrealtype* cont3 = N_VGetArrayPointer(rmem->cont3);
-  sunrealtype* cont4 = N_VGetArrayPointer(rmem->cont4);
+  sunrealtype* cont1 = N_VGetArrayPointer(rmem->cont[0]);
+  sunrealtype* cont2 = N_VGetArrayPointer(rmem->cont[1]);
+  sunrealtype* cont3 = N_VGetArrayPointer(rmem->cont[2]);
+  sunrealtype* cont4 = N_VGetArrayPointer(rmem->cont[3]);
 
-  sunrealtype c1    = rmem->c1;
-  sunrealtype c2    = rmem->c2;
-  sunrealtype c1m1  = rmem->c1m1;   /* c1 - 1 */
-  sunrealtype c2m1  = rmem->c2m1;   /* c2 - 1 */
-  sunrealtype c1mc2 = rmem->c1mc2;  /* c1 - c2 */
+  sunrealtype c1    = rmem->c[0];
+  sunrealtype c2    = rmem->c[1];
+  sunrealtype c1m1  = (rmem->c[0] - SUN_RCONST(1.0));   /* c1 - 1 */
+  sunrealtype c2m1  = (rmem->c[1] - SUN_RCONST(1.0));   /* c2 - 1 */
+  sunrealtype c1mc2 = (rmem->c[0] - rmem->c[1]);  /* c1 - c2 */
 
   /* Fortran radau5.f lines 1017-1027:
    *

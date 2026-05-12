@@ -159,15 +159,14 @@ int radau5_InitConstants(Radau5Mem rmem)
   c2m1  = c2 - SUN_RCONST(1.0);
   c1mc2 = c1 - c2;
 
-  rmem->c1   = c1;
-  rmem->c2   = c2;
-  rmem->c1m1 = c1m1;
-  rmem->c2m1 = c2m1;
-  rmem->c1mc2 = c1mc2;
+  rmem->c[0]   = c1;
+  rmem->c[1]   = c2;
+  
+  
 
-  rmem->dd1 = -(SUN_RCONST(13.0) + SUN_RCONST(7.0) * SQ6) / SUN_RCONST(3.0);
-  rmem->dd2 = (-SUN_RCONST(13.0) + SUN_RCONST(7.0) * SQ6) / SUN_RCONST(3.0);
-  rmem->dd3 = -SUN_RCONST(1.0) / SUN_RCONST(3.0);
+  rmem->dd[0] = -(SUN_RCONST(13.0) + SUN_RCONST(7.0) * SQ6) / SUN_RCONST(3.0);
+  rmem->dd[1] = (-SUN_RCONST(13.0) + SUN_RCONST(7.0) * SQ6) / SUN_RCONST(3.0);
+  rmem->dd[2] = -SUN_RCONST(1.0) / SUN_RCONST(3.0);
 
   u1   = (SUN_RCONST(6.0) + pow(SUN_RCONST(81.0), SUN_RCONST(1.0)/SUN_RCONST(3.0))
                            - pow(SUN_RCONST(9.0),  SUN_RCONST(1.0)/SUN_RCONST(3.0)))
@@ -187,29 +186,29 @@ int radau5_InitConstants(Radau5Mem rmem)
 beta = beta / cno;
 
   rmem->u1   = u1;
-  rmem->alph = alph;
-  rmem->beta = beta;
+  rmem->alph[0] = alph;
+  rmem->beta_eig[0] = beta;
 
   /* Eigenvector matrix T (hardcoded from Fortran) */
-  rmem->T11 =  SUN_RCONST(9.1232394870892942792e-02);
-  rmem->T12 = -SUN_RCONST(0.14125529502095420843);
-  rmem->T13 = -SUN_RCONST(3.0029194105147424492e-02);
-  rmem->T21 =  SUN_RCONST(0.24171793270710701896);
-  rmem->T22 =  SUN_RCONST(0.20412935229379993199);
-  rmem->T23 =  SUN_RCONST(0.38294211275726193779);
-  rmem->T31 =  SUN_RCONST(0.96604818261509293619);
+  rmem->T_mat[0] =  SUN_RCONST(9.1232394870892942792e-02);
+  rmem->T_mat[1] = -SUN_RCONST(0.14125529502095420843);
+  rmem->T_mat[2] = -SUN_RCONST(3.0029194105147424492e-02);
+  rmem->T_mat[3] =  SUN_RCONST(0.24171793270710701896);
+  rmem->T_mat[4] =  SUN_RCONST(0.20412935229379993199);
+  rmem->T_mat[5] =  SUN_RCONST(0.38294211275726193779);
+  rmem->T_mat[6] =  SUN_RCONST(0.96604818261509293619);
   /* T32 = 1, T33 = 0 are implicit in the Fortran formulation */
 
   /* Inverse eigenvector matrix TI */
-  rmem->TI11 =  SUN_RCONST(4.3255798900631553510);
-  rmem->TI12 =  SUN_RCONST(0.33919925181580986954);
-  rmem->TI13 =  SUN_RCONST(0.54177053993587487119);
-  rmem->TI21 = -SUN_RCONST(4.1787185915519047273);
-  rmem->TI22 = -SUN_RCONST(0.32768282076106238708);
-  rmem->TI23 =  SUN_RCONST(0.47662355450055045196);
-  rmem->TI31 = -SUN_RCONST(0.50287263494578687595);
-  rmem->TI32 =  SUN_RCONST(2.5719269498556054292);
-  rmem->TI33 = -SUN_RCONST(0.59603920482822492497);
+  rmem->TI_mat[0] =  SUN_RCONST(4.3255798900631553510);
+  rmem->TI_mat[1] =  SUN_RCONST(0.33919925181580986954);
+  rmem->TI_mat[2] =  SUN_RCONST(0.54177053993587487119);
+  rmem->TI_mat[3] = -SUN_RCONST(4.1787185915519047273);
+  rmem->TI_mat[4] = -SUN_RCONST(0.32768282076106238708);
+  rmem->TI_mat[5] =  SUN_RCONST(0.47662355450055045196);
+  rmem->TI_mat[6] = -SUN_RCONST(0.50287263494578687595);
+  rmem->TI_mat[7] =  SUN_RCONST(2.5719269498556054292);
+  rmem->TI_mat[8] = -SUN_RCONST(0.59603920482822492497);
 
   /* --- Tolerance transformation is deferred to Radau5Solve (first call)
    * because user may call Radau5SStolerances after Radau5Init. --- */
@@ -224,55 +223,55 @@ beta = beta / cno;
   if (rmem->use_schur)
   {
     /* US: orthogonal Schur vectors (columns of US) */
-    rmem->US[0][0] =  SUN_RCONST( 0.138665108751908);
-    rmem->US[0][1] =  SUN_RCONST( 0.046278149309488);
-    rmem->US[0][2] =  SUN_RCONST( 0.989257459163847);
-    rmem->US[1][0] =  SUN_RCONST(-0.229641242351741);
-    rmem->US[1][1] =  SUN_RCONST(-0.970178886551833);
-    rmem->US[1][2] =  SUN_RCONST( 0.077574660168092);
-    rmem->US[2][0] =  SUN_RCONST(-0.963346711950568);
-    rmem->US[2][1] =  SUN_RCONST( 0.237931210616713);
-    rmem->US[2][2] =  SUN_RCONST( 0.123902589111344);
+    rmem->US_mat[0] =  SUN_RCONST( 0.138665108751908);
+    rmem->US_mat[1] =  SUN_RCONST( 0.046278149309488);
+    rmem->US_mat[2] =  SUN_RCONST( 0.989257459163847);
+    rmem->US_mat[3] =  SUN_RCONST(-0.229641242351741);
+    rmem->US_mat[4] =  SUN_RCONST(-0.970178886551833);
+    rmem->US_mat[5] =  SUN_RCONST( 0.077574660168092);
+    rmem->US_mat[6] =  SUN_RCONST(-0.963346711950568);
+    rmem->US_mat[7] =  SUN_RCONST( 0.237931210616713);
+    rmem->US_mat[8] =  SUN_RCONST( 0.123902589111344);
 
     /* TS: upper quasi-triangular Schur form */
-    rmem->TS[0][0] =  SUN_RCONST( 2.68108287362775);
-    rmem->TS[0][1] =  SUN_RCONST(-8.42387579808538);
-    rmem->TS[0][2] =  SUN_RCONST(-4.08857781305964);
-    rmem->TS[1][0] =  SUN_RCONST( 1.10461319985220);
-    rmem->TS[1][1] =  SUN_RCONST( 2.68108287362775);
-    rmem->TS[1][2] =  SUN_RCONST( 4.70015200634394);
-    rmem->TS[2][0] =  SUN_RCONST( 0.0);
-    rmem->TS[2][1] =  SUN_RCONST( 0.0);
-    rmem->TS[2][2] =  SUN_RCONST( 3.63783425274450);
+    rmem->TS_mat[0] =  SUN_RCONST( 2.68108287362775);
+    rmem->TS_mat[1] =  SUN_RCONST(-8.42387579808538);
+    rmem->TS_mat[2] =  SUN_RCONST(-4.08857781305964);
+    rmem->TS_mat[3] =  SUN_RCONST( 1.10461319985220);
+    rmem->TS_mat[4] =  SUN_RCONST( 2.68108287362775);
+    rmem->TS_mat[5] =  SUN_RCONST( 4.70015200634394);
+    rmem->TS_mat[6] =  SUN_RCONST( 0.0);
+    rmem->TS_mat[7] =  SUN_RCONST( 0.0);
+    rmem->TS_mat[8] =  SUN_RCONST( 3.63783425274450);
 
     /* Override eigenvalue scalings:
      * u1 = TS[2][2] (real eigenvalue, used as fac1 = u1/h for E1)
      * alph/beta are not used directly — E2 is built from TS[0:2][0:2] block */
-    rmem->u1 = rmem->TS[2][2];
+    rmem->u1 = rmem->TS_mat[8];
 
     /* Set T = US and TI = US^T for the Newton transforms.
      * Note: with Schur, T32 and T33 are NOT 1 and 0. We use the
      * full 3×3 T matrix. The Newton back-transform must handle this. */
-    rmem->T11 = rmem->US[0][0];
-    rmem->T12 = rmem->US[0][1];
-    rmem->T13 = rmem->US[0][2];
-    rmem->T21 = rmem->US[1][0];
-    rmem->T22 = rmem->US[1][1];
-    rmem->T23 = rmem->US[1][2];
-    rmem->T31 = rmem->US[2][0];
+    rmem->T_mat[0] = rmem->US_mat[0];
+    rmem->T_mat[1] = rmem->US_mat[1];
+    rmem->T_mat[2] = rmem->US_mat[2];
+    rmem->T_mat[3] = rmem->US_mat[3];
+    rmem->T_mat[4] = rmem->US_mat[4];
+    rmem->T_mat[5] = rmem->US_mat[5];
+    rmem->T_mat[6] = rmem->US_mat[6];
     /* T32, T33 not stored as separate fields in the eigenvalue path
      * (T32=1, T33=0 implicit). For Schur, we handle them in the
      * Newton code using US[][] directly. */
 
-    rmem->TI11 = rmem->US[0][0];  /* US^T row 0 = US col 0 */
-    rmem->TI12 = rmem->US[1][0];
-    rmem->TI13 = rmem->US[2][0];
-    rmem->TI21 = rmem->US[0][1];  /* US^T row 1 = US col 1 */
-    rmem->TI22 = rmem->US[1][1];
-    rmem->TI23 = rmem->US[2][1];
-    rmem->TI31 = rmem->US[0][2];  /* US^T row 2 = US col 2 */
-    rmem->TI32 = rmem->US[1][2];
-    rmem->TI33 = rmem->US[2][2];
+    rmem->TI_mat[0] = rmem->US_mat[0];  /* US^T row 0 = US col 0 */
+    rmem->TI_mat[1] = rmem->US_mat[3];
+    rmem->TI_mat[2] = rmem->US_mat[6];
+    rmem->TI_mat[3] = rmem->US_mat[1];  /* US^T row 1 = US col 1 */
+    rmem->TI_mat[4] = rmem->US_mat[4];
+    rmem->TI_mat[5] = rmem->US_mat[7];
+    rmem->TI_mat[6] = rmem->US_mat[2];  /* US^T row 2 = US col 2 */
+    rmem->TI_mat[7] = rmem->US_mat[5];
+    rmem->TI_mat[8] = rmem->US_mat[8];
   }
 
   return RADAU5_SUCCESS;
@@ -761,15 +760,15 @@ int radau5_BuildE2(Radau5Mem rmem, sunrealtype alphn, sunrealtype betan)
   n  = rmem->n;
   J  = rmem->J;
   M  = rmem->M;
-  E2 = rmem->E2;
+  E2 = rmem->E2[0];
 
   if (rmem->use_schur)
   {
     sunrealtype h = rmem->h;
-    a00 = rmem->TS[0][0] / h;
-    a01 = rmem->TS[0][1] / h;
-    a10 = rmem->TS[1][0] / h;
-    a11 = rmem->TS[1][1] / h;
+    a00 = rmem->TS_mat[0] / h;
+    a01 = rmem->TS_mat[1] / h;
+    a10 = rmem->TS_mat[3] / h;
+    a11 = rmem->TS_mat[4] / h;
   }
   else
   {
@@ -1009,7 +1008,7 @@ int radau5_DecompE2(Radau5Mem rmem)
 {
   int retval;
 
-  retval = SUNLinSolSetup(rmem->LS_E2, rmem->E2);
+  retval = SUNLinSolSetup(rmem->LS_E2[0], rmem->E2[0]);
   rmem->ndec++;
 
   return (retval == 0) ? RADAU5_SUCCESS : RADAU5_SINGULAR_MATRIX;

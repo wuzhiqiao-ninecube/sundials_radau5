@@ -25,22 +25,22 @@ int radau5_Newton(Radau5Mem rmem, int* newt_out)
   sunrealtype  uround   = SUN_UNIT_ROUNDOFF;
 
   /* Collocation nodes */
-  sunrealtype c1 = rmem->c1;
-  sunrealtype c2 = rmem->c2;
+  sunrealtype c1 = rmem->c[0];
+  sunrealtype c2 = rmem->c[1];
 
   /* Eigenvalue scalings */
   sunrealtype u1   = rmem->u1;
-  sunrealtype alph = rmem->alph;
-  sunrealtype beta = rmem->beta;
+  sunrealtype alph = rmem->alph[0];
+  sunrealtype beta = rmem->beta_eig[0];
 
   /* Transformation matrices */
-  sunrealtype TI11 = rmem->TI11, TI12 = rmem->TI12, TI13 = rmem->TI13;
-  sunrealtype TI21 = rmem->TI21, TI22 = rmem->TI22, TI23 = rmem->TI23;
-  sunrealtype TI31 = rmem->TI31, TI32 = rmem->TI32, TI33 = rmem->TI33;
+  sunrealtype TI11 = rmem->TI_mat[0], TI12 = rmem->TI_mat[1], TI13 = rmem->TI_mat[2];
+  sunrealtype TI21 = rmem->TI_mat[3], TI22 = rmem->TI_mat[4], TI23 = rmem->TI_mat[5];
+  sunrealtype TI31 = rmem->TI_mat[6], TI32 = rmem->TI_mat[7], TI33 = rmem->TI_mat[8];
 
-  sunrealtype T11 = rmem->T11, T12 = rmem->T12, T13 = rmem->T13;
-  sunrealtype T21 = rmem->T21, T22 = rmem->T22, T23 = rmem->T23;
-  sunrealtype T31 = rmem->T31; /* T32 = 1, T33 = 0 (implicit) */
+  sunrealtype T11 = rmem->T_mat[0], T12 = rmem->T_mat[1], T13 = rmem->T_mat[2];
+  sunrealtype T21 = rmem->T_mat[3], T22 = rmem->T_mat[4], T23 = rmem->T_mat[5];
+  sunrealtype T31 = rmem->T_mat[6]; /* T32 = 1, T33 = 0 (implicit) */
 
   /* Newton control */
   int          nit   = rmem->nit;
@@ -48,16 +48,16 @@ int radau5_Newton(Radau5Mem rmem, int* newt_out)
 
   /* Working vectors */
   N_Vector ycur = rmem->ycur;
-  N_Vector z1   = rmem->z1;
-  N_Vector z2   = rmem->z2;
-  N_Vector z3   = rmem->z3;
-  N_Vector f1   = rmem->f1;
-  N_Vector f2   = rmem->f2;
-  N_Vector f3   = rmem->f3;
+  N_Vector z1   = rmem->z[0];
+  N_Vector z2   = rmem->z[1];
+  N_Vector z3   = rmem->z[2];
+  N_Vector f1   = rmem->f[0];
+  N_Vector f2   = rmem->f[1];
+  N_Vector f3   = rmem->f[2];
   N_Vector tmp1 = rmem->tmp1;
   N_Vector scal = rmem->scal;
-  N_Vector rhs2 = rmem->rhs2;
-  N_Vector sol2 = rmem->sol2;
+  N_Vector rhs2 = rmem->rhs2[0];
+  N_Vector sol2 = rmem->sol2[0];
 
   /* Raw data pointers (set inside loop) */
   sunrealtype *z1_data, *z2_data, *z3_data;
@@ -170,13 +170,13 @@ int radau5_Newton(Radau5Mem rmem, int* newt_out)
     if (rmem->use_schur)
     {
       /* --- Schur mode: full TS row scalings + block back-substitution --- */
-      sunrealtype ts00 = rmem->TS[0][0] / h;
-      sunrealtype ts01 = rmem->TS[0][1] / h;
-      sunrealtype ts02 = rmem->TS[0][2] / h;
-      sunrealtype ts10 = rmem->TS[1][0] / h;
-      sunrealtype ts11 = rmem->TS[1][1] / h;
-      sunrealtype ts12 = rmem->TS[1][2] / h;
-      sunrealtype ts22 = rmem->TS[2][2] / h;  /* = fac1 = u1/h */
+      sunrealtype ts00 = rmem->TS_mat[0] / h;
+      sunrealtype ts01 = rmem->TS_mat[1] / h;
+      sunrealtype ts02 = rmem->TS_mat[2] / h;
+      sunrealtype ts10 = rmem->TS_mat[3] / h;
+      sunrealtype ts11 = rmem->TS_mat[4] / h;
+      sunrealtype ts12 = rmem->TS_mat[5] / h;
+      sunrealtype ts22 = rmem->TS_mat[8] / h;  /* = fac1 = u1/h */
 
       if (rmem->M != NULL)
       {
@@ -265,7 +265,7 @@ int radau5_Newton(Radau5Mem rmem, int* newt_out)
         rhs2_data[ii + n] = z2_data[ii];
       }
 
-      if (SUNLinSolSolve(rmem->LS_E2, rmem->E2, sol2, rhs2, SUN_RCONST(0.0)) != 0)
+      if (SUNLinSolSolve(rmem->LS_E2[0], rmem->E2[0], sol2, rhs2, SUN_RCONST(0.0)) != 0)
         return RADAU5_LSOLVE_FAIL;
 
       sol2_data = N_VGetArrayPointer(sol2);
@@ -351,7 +351,7 @@ int radau5_Newton(Radau5Mem rmem, int* newt_out)
         rhs2_data[ii + n] = z3_data[ii];
       }
 
-      if (SUNLinSolSolve(rmem->LS_E2, rmem->E2, sol2, rhs2, SUN_RCONST(0.0)) != 0)
+      if (SUNLinSolSolve(rmem->LS_E2[0], rmem->E2[0], sol2, rhs2, SUN_RCONST(0.0)) != 0)
         return RADAU5_LSOLVE_FAIL;
 
       sol2_data = N_VGetArrayPointer(sol2);
@@ -448,9 +448,9 @@ int radau5_Newton(Radau5Mem rmem, int* newt_out)
      * ----------------------------------------------------------------*/
     if (rmem->use_schur)
     {
-      sunrealtype US00 = rmem->US[0][0], US01 = rmem->US[0][1], US02 = rmem->US[0][2];
-      sunrealtype US10 = rmem->US[1][0], US11 = rmem->US[1][1], US12 = rmem->US[1][2];
-      sunrealtype US20 = rmem->US[2][0], US21 = rmem->US[2][1], US22 = rmem->US[2][2];
+      sunrealtype US00 = rmem->US_mat[0], US01 = rmem->US_mat[1], US02 = rmem->US_mat[2];
+      sunrealtype US10 = rmem->US_mat[3], US11 = rmem->US_mat[4], US12 = rmem->US_mat[5];
+      sunrealtype US20 = rmem->US_mat[6], US21 = rmem->US_mat[7], US22 = rmem->US_mat[8];
 
       for (sunindextype ii = 0; ii < n; ii++)
       {

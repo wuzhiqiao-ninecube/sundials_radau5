@@ -21,29 +21,29 @@ int radau5_Step(Radau5Mem rmem)
   sunrealtype  uround = SUN_UNIT_ROUNDOFF;
 
   /* Collocation node offsets */
-  sunrealtype c1   = rmem->c1;
-  sunrealtype c2   = rmem->c2;
-  sunrealtype c1m1 = rmem->c1m1;
-  sunrealtype c2m1 = rmem->c2m1;
+  sunrealtype c1   = rmem->c[0];
+  sunrealtype c2   = rmem->c[1];
+  sunrealtype c1m1 = (rmem->c[0] - SUN_RCONST(1.0));
+  sunrealtype c2m1 = (rmem->c[1] - SUN_RCONST(1.0));
   (void)c1m1; /* used only in extrapolation via cont arrays */
   (void)c2m1;
 
   /* Eigenvalue parameters */
   sunrealtype u1   = rmem->u1;
-  sunrealtype alph = rmem->alph;
-  sunrealtype beta = rmem->beta;
+  sunrealtype alph = rmem->alph[0];
+  sunrealtype beta = rmem->beta_eig[0];
 
   sunrealtype TI11,TI12,TI13, TI21,TI22,TI23, TI31,TI32,TI33; /* set below based on use_schur */
 
   /* TI matrix rows (for F1/F2/F3 from Z extrapolation) */
   if (rmem->use_schur) {
-    TI11 = rmem->US[0][0], TI12 = rmem->US[1][0], TI13 = rmem->US[2][0];
-    TI21 = rmem->US[0][1], TI22 = rmem->US[1][1], TI23 = rmem->US[2][1];
-    TI31 = rmem->US[0][2], TI32 = rmem->US[1][2], TI33 = rmem->US[2][2];
+    TI11 = rmem->US_mat[0], TI12 = rmem->US_mat[3], TI13 = rmem->US_mat[6];
+    TI21 = rmem->US_mat[1], TI22 = rmem->US_mat[4], TI23 = rmem->US_mat[7];
+    TI31 = rmem->US_mat[2], TI32 = rmem->US_mat[5], TI33 = rmem->US_mat[8];
   }else {
-    TI11 = rmem->TI11, TI12 = rmem->TI12, TI13 = rmem->TI13;
-    TI21 = rmem->TI21, TI22 = rmem->TI22, TI23 = rmem->TI23;
-    TI31 = rmem->TI31, TI32 = rmem->TI32, TI33 = rmem->TI33;
+    TI11 = rmem->TI_mat[0], TI12 = rmem->TI_mat[1], TI13 = rmem->TI_mat[2];
+    TI21 = rmem->TI_mat[3], TI22 = rmem->TI_mat[4], TI23 = rmem->TI_mat[5];
+    TI31 = rmem->TI_mat[6], TI32 = rmem->TI_mat[7], TI33 = rmem->TI_mat[8];
   }
 
   /* Step-size control parameters */
@@ -164,12 +164,12 @@ label30:
   }
 
   /* Newton starting values */
-  z1d = N_VGetArrayPointer(rmem->z1);
-  z2d = N_VGetArrayPointer(rmem->z2);
-  z3d = N_VGetArrayPointer(rmem->z3);
-  f1d = N_VGetArrayPointer(rmem->f1);
-  f2d = N_VGetArrayPointer(rmem->f2);
-  f3d = N_VGetArrayPointer(rmem->f3);
+  z1d = N_VGetArrayPointer(rmem->z[0]);
+  z2d = N_VGetArrayPointer(rmem->z[1]);
+  z3d = N_VGetArrayPointer(rmem->z[2]);
+  f1d = N_VGetArrayPointer(rmem->f[0]);
+  f2d = N_VGetArrayPointer(rmem->f[1]);
+  f3d = N_VGetArrayPointer(rmem->f[2]);
 
   if (rmem->first || rmem->startn)
   {
@@ -186,9 +186,9 @@ label30:
   else
   {
     /* Extrapolate from previous step using continuous output coefficients */
-    sunrealtype *ak1d = N_VGetArrayPointer(rmem->cont2);
-    sunrealtype *ak2d = N_VGetArrayPointer(rmem->cont3);
-    sunrealtype *ak3d = N_VGetArrayPointer(rmem->cont4);
+    sunrealtype *ak1d = N_VGetArrayPointer(rmem->cont[1]);
+    sunrealtype *ak2d = N_VGetArrayPointer(rmem->cont[2]);
+    sunrealtype *ak3d = N_VGetArrayPointer(rmem->cont[3]);
 
     sunrealtype c3q = rmem->h / rmem->hold;
     sunrealtype c1q = c1 * c3q;
@@ -266,7 +266,7 @@ label30:
     rmem->tn  += rmem->h;
 
     ycurd = N_VGetArrayPointer(rmem->ycur);
-    z3d   = N_VGetArrayPointer(rmem->z3);
+    z3d   = N_VGetArrayPointer(rmem->z[2]);
     for (sunindextype i = 0; i < n; i++)
       ycurd[i] += z3d[i];
 

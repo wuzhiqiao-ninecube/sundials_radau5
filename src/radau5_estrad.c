@@ -31,13 +31,13 @@ int radau5_ErrorEstimate(Radau5Mem rmem, sunrealtype* err)
   sunrealtype  h    = rmem->h;
 
   /* Scaled error coefficients: hee_k = dd_k / h */
-  sunrealtype hee1 = rmem->dd1 / h;
-  sunrealtype hee2 = rmem->dd2 / h;
-  sunrealtype hee3 = rmem->dd3 / h;
+  sunrealtype hee1 = rmem->dd[0] / h;
+  sunrealtype hee2 = rmem->dd[1] / h;
+  sunrealtype hee3 = rmem->dd[2] / h;
 
-  sunrealtype* z1   = N_VGetArrayPointer(rmem->z1);
-  sunrealtype* z2   = N_VGetArrayPointer(rmem->z2);
-  sunrealtype* z3   = N_VGetArrayPointer(rmem->z3);
+  sunrealtype* z1   = N_VGetArrayPointer(rmem->z[0]);
+  sunrealtype* z2   = N_VGetArrayPointer(rmem->z[1]);
+  sunrealtype* z3   = N_VGetArrayPointer(rmem->z[2]);
   sunrealtype* fn   = N_VGetArrayPointer(rmem->fn);
   sunrealtype* scal = N_VGetArrayPointer(rmem->scal);
   sunrealtype* f2   = N_VGetArrayPointer(rmem->tmp2);   /* F2 in Fortran */
@@ -106,14 +106,14 @@ int radau5_ErrorEstimate(Radau5Mem rmem, sunrealtype* err)
   if (rmem->first || rmem->reject)
   {
     sunrealtype* ycur = N_VGetArrayPointer(rmem->ycur);
-    sunrealtype* f1   = N_VGetArrayPointer(rmem->f1);   /* reuse f1 scratch */
+    sunrealtype* f1   = N_VGetArrayPointer(rmem->f[0]);   /* reuse f1 scratch */
 
     /* corrected y -> tmp1 */
     for (i = 0; i < n; i++)
       cont[i] = ycur[i] + cont[i];
 
     /* evaluate f at corrected point; result goes into f1 (tmp scratch) */
-    int retval = rmem->rhs(rmem->tn, rmem->tmp1, rmem->f1, rmem->user_data);
+    int retval = rmem->rhs(rmem->tn, rmem->tmp1, rmem->f[0], rmem->user_data);
     rmem->nfcn++;
     if (retval < 0) return RADAU5_RHSFUNC_FAIL;
     if (retval > 0) return RADAU5_RHSFUNC_RECVR;
