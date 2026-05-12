@@ -29,41 +29,34 @@ int radau5_ErrorEstimate(Radau5Mem rmem, sunrealtype* err)
 {
   sunindextype i, n = rmem->n;
   sunrealtype  h    = rmem->h;
+  int ns = rmem->ns;
 
-  /* Scaled error coefficients: hee_k = dd_k / h */
-  sunrealtype hee1 = rmem->dd[0] / h;
-  sunrealtype hee2 = rmem->dd[1] / h;
-  sunrealtype hee3 = rmem->dd[2] / h;
-
-  sunrealtype* z1   = N_VGetArrayPointer(rmem->z[0]);
-  sunrealtype* z2   = N_VGetArrayPointer(rmem->z[1]);
-  sunrealtype* z3   = N_VGetArrayPointer(rmem->z[2]);
   sunrealtype* fn   = N_VGetArrayPointer(rmem->fn);
   sunrealtype* scal = N_VGetArrayPointer(rmem->scal);
   sunrealtype* f2   = N_VGetArrayPointer(rmem->tmp2);   /* F2 in Fortran */
   sunrealtype* cont = N_VGetArrayPointer(rmem->tmp1);   /* CONT in Fortran */
 
+  /* Get pointers to all stage vectors */
+  sunrealtype* zd[RADAU5_NS_MAX];
+  for (int k = 0; k < ns; k++)
+    zd[k] = N_VGetArrayPointer(rmem->z[k]);
+
   /* ------------------------------------------------------------------
-   * First pass: form F2 and CONT, then solve E1 * CONT = CONT.
-   *
-   * Identity mass (IJOB=1):
-   *   F2(I)   = HEE1*Z1(I) + HEE2*Z2(I) + HEE3*Z3(I)
-   *   CONT(I) = F2(I) + Y0(I)
-   *
-   * General mass (IJOB=3,5):
-   *   raw(I)  = HEE1*Z1(I) + HEE2*Z2(I) + HEE3*Z3(I)
-   *   F2      = M * raw
-   *   CONT(I) = F2(I) + Y0(I)
+   * First pass: form F2 = sum_k (dd[k]/h) * z[k], then CONT = F2 + fn.
    * ------------------------------------------------------------------ */
   if (rmem->M != NULL)
   {
     /* General mass: compute raw combo into tmp3, then M*tmp3 → tmp2 (f2) */
     sunrealtype* raw = N_VGetArrayPointer(rmem->tmp3);
     for (i = 0; i < n; i++)
-      raw[i] = hee1 * z1[i] + hee2 * z2[i] + hee3 * z3[i];
+    {
+      sunrealtype sum_val = SUN_RCONST(0.0);
+      for (int k = 0; k < ns; k++)
+        sum_val += rmem->dd[k] * zd[k][i];
+      raw[i] = sum_val / h;
+    }
 
     radau5_MassMult(rmem, rmem->tmp3, rmem->tmp2);
-    /* f2 pointer already points to tmp2 data */
 
     for (i = 0; i < n; i++)
       cont[i] = f2[i] + fn[i];
@@ -73,7 +66,10 @@ int radau5_ErrorEstimate(Radau5Mem rmem, sunrealtype* err)
     /* Identity mass */
     for (i = 0; i < n; i++)
     {
-      f2[i]   = hee1 * z1[i] + hee2 * z2[i] + hee3 * z3[i];
+      sunrealtype sum_val = SUN_RCONST(0.0);
+      for (int k = 0; k < ns; k++)
+        sum_val += rmem->dd[k] * zd[k][i];
+      f2[i]   = sum_val / h;
       cont[i] = f2[i] + fn[i];
     }
   }
