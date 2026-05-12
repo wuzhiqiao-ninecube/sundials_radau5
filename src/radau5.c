@@ -221,33 +221,35 @@ int Radau5SetLinearSolver(void* radau5_mem, SUNMatrix J)
     rmem->E1 = SUNDenseMatrix(n, n, rmem->sunctx);
     if (!rmem->E1) return RADAU5_MEM_FAIL;
 
-    /* E2: 2n×2n dense */
-    rmem->E2[0] = SUNDenseMatrix(2 * n, 2 * n, rmem->sunctx);
-    if (!rmem->E2[0]) return RADAU5_MEM_FAIL;
-
-    /* y2n: serial vector of length 2n for LS_E2 */
-    rmem->y2n[0] = N_VNew_Serial(2 * n, rmem->sunctx);
-    if (!rmem->y2n[0]) return RADAU5_MEM_FAIL;
-
-    /* rhs2, sol2 for the realified complex solve */
-    rmem->rhs2[0] = N_VNew_Serial(2 * n, rmem->sunctx);
-    if (!rmem->rhs2[0]) return RADAU5_MEM_FAIL;
-    rmem->sol2[0] = N_VNew_Serial(2 * n, rmem->sunctx);
-    if (!rmem->sol2[0]) return RADAU5_MEM_FAIL;
+    /* E2: 2n×2n dense, one per complex pair */
+    for (int pk = 0; pk < rmem->npairs; pk++) {
+      rmem->E2[pk] = SUNDenseMatrix(2 * n, 2 * n, rmem->sunctx);
+      if (!rmem->E2[pk]) return RADAU5_MEM_FAIL;
+      rmem->y2n[pk] = N_VNew_Serial(2 * n, rmem->sunctx);
+      if (!rmem->y2n[pk]) return RADAU5_MEM_FAIL;
+      rmem->rhs2[pk] = N_VNew_Serial(2 * n, rmem->sunctx);
+      if (!rmem->rhs2[pk]) return RADAU5_MEM_FAIL;
+      rmem->sol2[pk] = N_VNew_Serial(2 * n, rmem->sunctx);
+      if (!rmem->sol2[pk]) return RADAU5_MEM_FAIL;
+    }
 
     /* Linear solvers */
     rmem->LS_E1 = SUNLinSol_Dense(rmem->ycur, rmem->E1, rmem->sunctx);
     if (!rmem->LS_E1) return RADAU5_MEM_FAIL;
 
-    rmem->LS_E2[0] = SUNLinSol_Dense(rmem->y2n[0], rmem->E2[0], rmem->sunctx);
-    if (!rmem->LS_E2[0]) return RADAU5_MEM_FAIL;
+    for (int pk = 0; pk < rmem->npairs; pk++) {
+      rmem->LS_E2[pk] = SUNLinSol_Dense(rmem->y2n[pk], rmem->E2[pk], rmem->sunctx);
+      if (!rmem->LS_E2[pk]) return RADAU5_MEM_FAIL;
+    }
 
     /* Initialize linear solvers */
     int ret;
     ret = SUNLinSolInitialize(rmem->LS_E1);
     if (ret != 0) return RADAU5_LSETUP_FAIL;
-    ret = SUNLinSolInitialize(rmem->LS_E2[0]);
-    if (ret != 0) return RADAU5_LSETUP_FAIL;
+    for (int pk = 0; pk < rmem->npairs; pk++) {
+      ret = SUNLinSolInitialize(rmem->LS_E2[pk]);
+      if (ret != 0) return RADAU5_LSETUP_FAIL;
+    }
 
   } else if (mid == SUNMATRIX_BAND) {
     sunindextype n = rmem->n;
