@@ -769,7 +769,7 @@ int radau5_BuildE1(Radau5Mem rmem, sunrealtype fac1)
  * J may be dense, band, or sparse. E2 is dense for dense/band J,
  * sparse (CSC) for sparse J.
  * ---------------------------------------------------------------------------*/
-int radau5_BuildE2(Radau5Mem rmem, sunrealtype alphn, sunrealtype betan)
+int radau5_BuildE2(Radau5Mem rmem, int pair_idx, sunrealtype alphn, sunrealtype betan)
 {
   sunindextype i, j, k, n;
   sunrealtype  jij, mij;
@@ -782,7 +782,7 @@ int radau5_BuildE2(Radau5Mem rmem, sunrealtype alphn, sunrealtype betan)
   n  = rmem->n;
   J  = rmem->J;
   M  = rmem->M;
-  E2 = rmem->E2[0];
+  E2 = rmem->E2[pair_idx];
 
   if (rmem->use_schur)
   {
@@ -1026,11 +1026,11 @@ int radau5_DecompE1(Radau5Mem rmem)
  *
  * Factor E2 via SUNLinSolSetup. Increments ndec.
  * ---------------------------------------------------------------------------*/
-int radau5_DecompE2(Radau5Mem rmem)
+int radau5_DecompE2(Radau5Mem rmem, int pair_idx)
 {
   int retval;
 
-  retval = SUNLinSolSetup(rmem->LS_E2[0], rmem->E2[0]);
+  retval = SUNLinSolSetup(rmem->LS_E2[pair_idx], rmem->E2[pair_idx]);
   rmem->ndec++;
 
   return (retval == 0) ? RADAU5_SUCCESS : RADAU5_SINGULAR_MATRIX;

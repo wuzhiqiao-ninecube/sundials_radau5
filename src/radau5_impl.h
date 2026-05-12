@@ -190,9 +190,9 @@ int radau5_DQJacDense(Radau5Mem rmem, sunrealtype t, N_Vector y, N_Vector fy);
 int radau5_DQJacBand(Radau5Mem rmem, sunrealtype t, N_Vector y, N_Vector fy);
 int radau5_DQJacSparse(Radau5Mem rmem, sunrealtype t, N_Vector y, N_Vector fy);
 int radau5_BuildE1(Radau5Mem rmem, sunrealtype fac1);
-int radau5_BuildE2(Radau5Mem rmem, sunrealtype alphn, sunrealtype betan);
+int radau5_BuildE2(Radau5Mem rmem, int pair_idx, sunrealtype alphn, sunrealtype betan);
 int radau5_DecompE1(Radau5Mem rmem);
-int radau5_DecompE2(Radau5Mem rmem);
+int radau5_DecompE2(Radau5Mem rmem, int pair_idx);
 int radau5_MassMult(Radau5Mem rmem, N_Vector x, N_Vector result);
 SUNMatrix radau5_SparseUnion(SUNMatrix A, SUNMatrix B, SUNContext sunctx);
 

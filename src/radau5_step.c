@@ -129,13 +129,20 @@ label20:
   betan = beta / rmem->h;
 
   radau5_BuildE1(rmem, fac1);
-  radau5_BuildE2(rmem, alphn, betan);
+  for (int pk = 0; pk < rmem->npairs; pk++) {
+    sunrealtype alphn_k = rmem->alph[pk] / rmem->h;
+    sunrealtype betan_k = rmem->beta_eig[pk] / rmem->h;
+    radau5_BuildE2(rmem, pk, alphn_k, betan_k);
+  }
 
   ret = radau5_DecompE1(rmem);
   if (ret != RADAU5_SUCCESS) goto label78;
 
-  ret = radau5_DecompE2(rmem);
-  if (ret != RADAU5_SUCCESS) goto label78;
+  for (int pk = 0; pk < rmem->npairs; pk++) {
+    ret = radau5_DecompE2(rmem, pk);
+    if (ret != RADAU5_SUCCESS) goto label78;
+  }
+  ret = RADAU5_SUCCESS;
 
   /* =========================================================================
    * label30: Newton starting values, Newton iteration, error estimate
