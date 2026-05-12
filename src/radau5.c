@@ -166,6 +166,11 @@ int Radau5Init(void* radau5_mem, Radau5RhsFn rhs, sunrealtype t0, N_Vector y0)
   int ret = radau5_InitConstants(rmem);
   if (ret != RADAU5_SUCCESS) return ret;
 
+  /* Adjust max Newton iterations based on ns (Fortran convention) */
+  if (rmem->nit == 7) {  /* only override if user hasn't set it */
+    rmem->nit = 7 + (rmem->ns - 3) * 5 / 2;  /* ns=3:7, ns=5:12, ns=7:17 */
+  }
+
   /* Reset counters and flags */
   rmem->nstep  = 0;
   rmem->naccpt = 0;

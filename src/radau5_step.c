@@ -274,7 +274,7 @@ label30:
     rmem->tn  += rmem->h;
 
     ycurd = N_VGetArrayPointer(rmem->ycur);
-    z3d   = N_VGetArrayPointer(rmem->z[2]);
+    z3d   = N_VGetArrayPointer(rmem->z[ns-1]);
     for (sunindextype i = 0; i < n; i++)
       ycurd[i] += z3d[i];
 
