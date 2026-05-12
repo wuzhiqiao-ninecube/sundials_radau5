@@ -80,24 +80,23 @@ void Radau5Free(void** radau5_mem)
   /* N_Vectors */
   if (rmem->ycur)  { N_VDestroy(rmem->ycur);  rmem->ycur  = NULL; }
   if (rmem->fn)    { N_VDestroy(rmem->fn);     rmem->fn    = NULL; }
-  if (rmem->z[0])    { N_VDestroy(rmem->z[0]);     rmem->z[0]    = NULL; }
-  if (rmem->z[1])    { N_VDestroy(rmem->z[1]);     rmem->z[1]    = NULL; }
-  if (rmem->z[2])    { N_VDestroy(rmem->z[2]);     rmem->z[2]    = NULL; }
-  if (rmem->f[0])    { N_VDestroy(rmem->f[0]);     rmem->f[0]    = NULL; }
-  if (rmem->f[1])    { N_VDestroy(rmem->f[1]);     rmem->f[1]    = NULL; }
-  if (rmem->f[2])    { N_VDestroy(rmem->f[2]);     rmem->f[2]    = NULL; }
+  for (int k = 0; k < RADAU5_NS_MAX; k++) {
+    if (rmem->z[k]) { N_VDestroy(rmem->z[k]); rmem->z[k] = NULL; }
+    if (rmem->f[k]) { N_VDestroy(rmem->f[k]); rmem->f[k] = NULL; }
+  }
   if (rmem->scal)  { N_VDestroy(rmem->scal);   rmem->scal  = NULL; }
   if (rmem->ewt)   { N_VDestroy(rmem->ewt);    rmem->ewt   = NULL; }
   if (rmem->tmp1)  { N_VDestroy(rmem->tmp1);   rmem->tmp1  = NULL; }
   if (rmem->tmp2)  { N_VDestroy(rmem->tmp2);   rmem->tmp2  = NULL; }
   if (rmem->tmp3)  { N_VDestroy(rmem->tmp3);   rmem->tmp3  = NULL; }
-  if (rmem->cont[0]) { N_VDestroy(rmem->cont[0]);  rmem->cont[0] = NULL; }
-  if (rmem->cont[1]) { N_VDestroy(rmem->cont[1]);  rmem->cont[1] = NULL; }
-  if (rmem->cont[2]) { N_VDestroy(rmem->cont[2]);  rmem->cont[2] = NULL; }
-  if (rmem->cont[3]) { N_VDestroy(rmem->cont[3]);  rmem->cont[3] = NULL; }
-  if (rmem->rhs2[0])  { N_VDestroy(rmem->rhs2[0]);   rmem->rhs2[0]  = NULL; }
-  if (rmem->sol2[0])  { N_VDestroy(rmem->sol2[0]);   rmem->sol2[0]  = NULL; }
-  if (rmem->y2n[0])   { N_VDestroy(rmem->y2n[0]);    rmem->y2n[0]   = NULL; }
+  for (int k = 0; k <= RADAU5_NS_MAX; k++) {
+    if (rmem->cont[k]) { N_VDestroy(rmem->cont[k]); rmem->cont[k] = NULL; }
+  }
+  for (int k = 0; k < RADAU5_NPAIRS_MAX; k++) {
+    if (rmem->rhs2[k]) { N_VDestroy(rmem->rhs2[k]); rmem->rhs2[k] = NULL; }
+    if (rmem->sol2[k]) { N_VDestroy(rmem->sol2[k]); rmem->sol2[k] = NULL; }
+    if (rmem->y2n[k])  { N_VDestroy(rmem->y2n[k]);  rmem->y2n[k]  = NULL; }
+  }
   if (rmem->id)    { N_VDestroy(rmem->id);      rmem->id    = NULL; }
   if (rmem->rtol_v){ N_VDestroy(rmem->rtol_v); rmem->rtol_v = NULL; }
   if (rmem->atol_v){ N_VDestroy(rmem->atol_v); rmem->atol_v = NULL; }
@@ -150,21 +149,18 @@ int Radau5Init(void* radau5_mem, Radau5RhsFn rhs, sunrealtype t0, N_Vector y0)
 
   /* Allocate all internal N_Vectors by cloning y0 */
   rmem->fn    = N_VClone(y0); if (!rmem->fn)    return RADAU5_MEM_FAIL;
-  rmem->z[0]    = N_VClone(y0); if (!rmem->z[0])    return RADAU5_MEM_FAIL;
-  rmem->z[1]    = N_VClone(y0); if (!rmem->z[1])    return RADAU5_MEM_FAIL;
-  rmem->z[2]    = N_VClone(y0); if (!rmem->z[2])    return RADAU5_MEM_FAIL;
-  rmem->f[0]    = N_VClone(y0); if (!rmem->f[0])    return RADAU5_MEM_FAIL;
-  rmem->f[1]    = N_VClone(y0); if (!rmem->f[1])    return RADAU5_MEM_FAIL;
-  rmem->f[2]    = N_VClone(y0); if (!rmem->f[2])    return RADAU5_MEM_FAIL;
+  for (int k = 0; k < rmem->ns; k++) {
+    rmem->z[k] = N_VClone(y0); if (!rmem->z[k]) return RADAU5_MEM_FAIL;
+    rmem->f[k] = N_VClone(y0); if (!rmem->f[k]) return RADAU5_MEM_FAIL;
+  }
   rmem->scal  = N_VClone(y0); if (!rmem->scal)  return RADAU5_MEM_FAIL;
   rmem->ewt   = N_VClone(y0); if (!rmem->ewt)   return RADAU5_MEM_FAIL;
   rmem->tmp1  = N_VClone(y0); if (!rmem->tmp1)  return RADAU5_MEM_FAIL;
   rmem->tmp2  = N_VClone(y0); if (!rmem->tmp2)  return RADAU5_MEM_FAIL;
   rmem->tmp3  = N_VClone(y0); if (!rmem->tmp3)  return RADAU5_MEM_FAIL;
-  rmem->cont[0] = N_VClone(y0); if (!rmem->cont[0]) return RADAU5_MEM_FAIL;
-  rmem->cont[1] = N_VClone(y0); if (!rmem->cont[1]) return RADAU5_MEM_FAIL;
-  rmem->cont[2] = N_VClone(y0); if (!rmem->cont[2]) return RADAU5_MEM_FAIL;
-  rmem->cont[3] = N_VClone(y0); if (!rmem->cont[3]) return RADAU5_MEM_FAIL;
+  for (int k = 0; k <= rmem->ns; k++) {
+    rmem->cont[k] = N_VClone(y0); if (!rmem->cont[k]) return RADAU5_MEM_FAIL;
+  }
 
   /* Initialize method constants */
   int ret = radau5_InitConstants(rmem);
