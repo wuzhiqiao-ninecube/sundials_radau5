@@ -59,15 +59,17 @@ static int rootfn_knee(sunrealtype t, N_Vector y, sunrealtype* gout,
 
 /* Solve the knee problem without constraint */
 static void solve_unconstrained(SUNContext sunctx, sunrealtype* xout,
-                                sunrealtype* yout_arr, int nout)
+                                sunrealtype* yout_arr, int nout,
+                                int nsmin, int nsmax)
 {
   void* mem = Radau5Create(sunctx);
+  Radau5SetOrderLimits(mem, nsmin, nsmax);
   N_Vector y = N_VNew_Serial(1, sunctx);
   N_VGetArrayPointer(y)[0] = 1.0;
 
   Radau5Init(mem, rhs_knee, 0.0, y);
   SUNMatrix J = SUNDenseMatrix(1, 1, sunctx);
-  Radau5SetLinearSolver(mem, J);
+  Radau5SetLinearSolver(mem, J, NULL);
   Radau5SetJacFn(mem, jac_knee);
   Radau5SStolerances(mem, 1.0e-3, 1.0e-6);
   Radau5SetInitStep(mem, 1.0e-6);
@@ -89,15 +91,17 @@ static void solve_unconstrained(SUNContext sunctx, sunrealtype* xout,
 
 /* Solve with non-negativity via rootfinding */
 static void solve_nonneg(SUNContext sunctx, sunrealtype* xout,
-                         sunrealtype* yout_arr, int nout)
+                         sunrealtype* yout_arr, int nout,
+                         int nsmin, int nsmax)
 {
   void* mem = Radau5Create(sunctx);
+  Radau5SetOrderLimits(mem, nsmin, nsmax);
   N_Vector y = N_VNew_Serial(1, sunctx);
   N_VGetArrayPointer(y)[0] = 1.0;
 
   Radau5Init(mem, rhs_knee, 0.0, y);
   SUNMatrix J = SUNDenseMatrix(1, 1, sunctx);
-  Radau5SetLinearSolver(mem, J);
+  Radau5SetLinearSolver(mem, J, NULL);
   Radau5SetJacFn(mem, jac_knee);
   Radau5SStolerances(mem, 1.0e-3, 1.0e-6);
   Radau5SetInitStep(mem, 1.0e-6);
@@ -150,8 +154,13 @@ done:;
   N_VDestroy(y); N_VDestroy(yout); SUNMatDestroy(J); Radau5Free(&mem);
 }
 
-int main(void)
+int main(int argc, char* argv[])
 {
+  int nsmin = 3;
+  int nsmax = 7;
+  if (argc > 1) nsmin = atoi(argv[1]);
+  if (argc > 2) nsmax = atoi(argv[2]);
+
   SUNContext sunctx;
   SUNContext_Create(SUN_COMM_NULL, &sunctx);
 
@@ -167,8 +176,8 @@ int main(void)
 
   sunrealtype y_noconst[21], y_nonneg[21];
 
-  solve_unconstrained(sunctx, xout, y_noconst, nout);
-  solve_nonneg(sunctx, xout, y_nonneg, nout);
+  solve_unconstrained(sunctx, xout, y_noconst, nout, nsmin, nsmax);
+  solve_nonneg(sunctx, xout, y_nonneg, nout, nsmin, nsmax);
 
   /* Print comparison */
   printf("\n  %6s  %14s  %14s  %14s\n", "x", "No constraint", "Non-negative", "Exact (1-x)+");

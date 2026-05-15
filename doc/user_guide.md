@@ -112,18 +112,29 @@ acceptable.
 5. **Create a template Jacobian matrix and attach the linear solver**
 
    ```c
-   /* Dense */
+   /* Dense (ODE or DAE with dense mass matrix) */
    SUNMatrix J = SUNDenseMatrix(n, n, sunctx);
-   Radau5SetLinearSolver(mem, J);
+   Radau5SetLinearSolver(mem, J, NULL);
 
    /* Band (mu = upper bandwidth, ml = lower bandwidth) */
    SUNMatrix J = SUNBandMatrix(n, mu, ml, sunctx);
-   Radau5SetLinearSolver(mem, J);
+   Radau5SetLinearSolver(mem, J, NULL);
 
-   /* Sparse (KLU) — analytic Jacobian or DQ via sparsity pattern */
+   /* Sparse (KLU) — ODE or dense mass matrix */
    SUNMatrix J = SUNSparseMatrix(n, n, nnz, CSC_MAT, sunctx);
-   Radau5SetLinearSolver(mem, J);
+   Radau5SetLinearSolver(mem, J, NULL);
+
+   /* Sparse (KLU) — sparse mass matrix: pass M for union pattern */
+   SUNMatrix J = SUNSparseMatrix(n, n, nnz_j, CSC_MAT, sunctx);
+   SUNMatrix M = SUNSparseMatrix(n, n, nnz_m, CSC_MAT, sunctx);
+   /* ... fill J and M sparsity patterns (colptrs, rowinds) ... */
+   Radau5SetLinearSolver(mem, J, M);
    ```
+
+   The `M` parameter is only needed when both J and M are sparse (CSC). It
+   provides the mass matrix sparsity pattern so that E1 can be allocated with
+   the union pattern `union(J, M)` at setup time. For dense/band problems or
+   ODE problems without a mass matrix, pass `NULL`.
 
 6. **Set tolerances**
 
@@ -229,7 +240,7 @@ int main(void)
   Radau5Init(mem, rhs, 0.0, y0);
 
   SUNMatrix J = SUNDenseMatrix(2, 2, sunctx);
-  Radau5SetLinearSolver(mem, J);
+  Radau5SetLinearSolver(mem, J, NULL);
   Radau5SetJacFn(mem, jac);
   Radau5SStolerances(mem, 1e-6, 1e-6);
   Radau5SetInitStep(mem, 1e-6);
@@ -420,7 +431,7 @@ function pointer, and sets the initial time. Must be called before
 ### Radau5SetLinearSolver
 
 ```c
-int Radau5SetLinearSolver(void* radau5_mem, SUNMatrix J);
+int Radau5SetLinearSolver(void* radau5_mem, SUNMatrix J, SUNMatrix M);
 ```
 
 Configures the internal linear algebra based on the type of the template
@@ -444,6 +455,7 @@ Must be called after `Radau5Init` and before `Radau5Solve`.
 |--------------|--------------------------------------------------------------|
 | `radau5_mem` | Opaque solver memory.                                        |
 | `J`          | Template Jacobian matrix. Cloned internally; user retains ownership. |
+| `M`          | Mass matrix template (sparse only). Used to compute `union(J, M)` sparsity pattern for E1/E2 allocation. Pass `NULL` for ODE problems, dense/band problems, or when M is not sparse. |
 
 | Return                | Description                                      |
 |-----------------------|--------------------------------------------------|
@@ -456,9 +468,10 @@ For band matrices, the upper and lower bandwidths are extracted from `J` and
 stored internally. The E2 system is always dense (2n x 2n) in the band case
 because the block coupling destroys the band structure.
 
-For sparse matrices, the E2 system is also sparse (CSC format). The sparsity
-pattern of E2 is constructed from the Jacobian and mass matrix patterns. For
-sparse matrices, the user may either provide an analytic Jacobian via
+For sparse matrices, the E2 system is also sparse (CSC format). When `M` is
+also sparse, E1 is allocated with the union sparsity pattern `union(J, M)` and
+E2 NNZ = 2×nnz_union + 2×nnz_M. When `M` is NULL or non-sparse, E1 uses J's
+pattern alone. The user may either provide an analytic Jacobian via
 `Radau5SetJacFn`, or provide a sparsity pattern via `Radau5SetSparsityPattern`
 to enable automatic difference-quotient Jacobian computation using column
 grouping (Curtis-Powell-Reid technique).

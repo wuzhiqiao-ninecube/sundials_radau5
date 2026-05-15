@@ -44,10 +44,11 @@ static sunrealtype run_one(SUNContext sunctx, sunrealtype rtol, sunrealtype atol
   N_Vector y0 = N_VNew_Serial(1, sunctx);
   N_VConst(1.0, y0);
 
+  Radau5SetOrderLimits(mem, 3, 3);  /* fixed ns=3 for convergence order test */
   Radau5Init(mem, rhs_exp, 0.0, y0);
 
   SUNMatrix J = SUNDenseMatrix(1, 1, sunctx);
-  Radau5SetLinearSolver(mem, J);
+  Radau5SetLinearSolver(mem, J, NULL);
 
   if (use_analytic_jac)
     Radau5SetJacFn(mem, jac_exp);

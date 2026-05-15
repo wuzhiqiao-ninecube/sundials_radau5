@@ -49,6 +49,20 @@ void* Radau5Create(SUNContext sunctx)
   /* Variable-order defaults */
   rmem->ns     = 3;
   rmem->npairs = 1;
+  rmem->nsmin  = 3;
+  rmem->nsmax  = 3;
+  rmem->variab = 0;
+  rmem->ichan  = 0;
+  rmem->thetat = SUN_RCONST(0.0);
+  rmem->nsnew  = 3;
+  rmem->change = 0;
+  rmem->unexp  = 0;
+  rmem->unexn  = 0;
+  rmem->ikeep  = 0;
+  rmem->vitu   = SUN_RCONST(0.002);
+  rmem->vitd   = SUN_RCONST(0.8);
+  rmem->hhou   = SUN_RCONST(1.2);
+  rmem->hhod   = SUN_RCONST(0.8);
 
   /* Scalar tolerances defaults */
   rmem->rtol_s = SUN_RCONST(1.0e-6);
@@ -64,7 +78,6 @@ void* Radau5Create(SUNContext sunctx)
   rmem->caljac = 1;
   rmem->skipdecomp = 0;
   rmem->tol_transformed = 0;
-  rmem->sparse_ls_finalized = 0;
 
   return (void*)rmem;
 }
@@ -107,11 +120,15 @@ void Radau5Free(void** radau5_mem)
   /* M is NOT owned by the solver — it's the user's matrix passed via SetMassFn */
   rmem->M = NULL;
   if (rmem->E1)     { SUNMatDestroy(rmem->E1);     rmem->E1     = NULL; }
-  if (rmem->E2[0])     { SUNMatDestroy(rmem->E2[0]);     rmem->E2[0]     = NULL; }
+  for (int k = 0; k < RADAU5_NPAIRS_MAX; k++) {
+    if (rmem->E2[k]) { SUNMatDestroy(rmem->E2[k]); rmem->E2[k] = NULL; }
+  }
 
   /* SUNLinearSolvers */
   if (rmem->LS_E1) { SUNLinSolFree(rmem->LS_E1); rmem->LS_E1 = NULL; }
-  if (rmem->LS_E2[0]) { SUNLinSolFree(rmem->LS_E2[0]); rmem->LS_E2[0] = NULL; }
+  for (int k = 0; k < RADAU5_NPAIRS_MAX; k++) {
+    if (rmem->LS_E2[k]) { SUNLinSolFree(rmem->LS_E2[k]); rmem->LS_E2[k] = NULL; }
+  }
 
   /* Column grouping data */
   if (rmem->col_group)     { free(rmem->col_group);     rmem->col_group     = NULL; }
@@ -147,9 +164,12 @@ int Radau5Init(void* radau5_mem, Radau5RhsFn rhs, sunrealtype t0, N_Vector y0)
   if (!rmem->ycur) return RADAU5_MEM_FAIL;
   N_VScale(SUN_RCONST(1.0), y0, rmem->ycur);
 
-  /* Allocate all internal N_Vectors by cloning y0 */
+  /* Allocate all internal N_Vectors by cloning y0.
+   * For variable-order support, allocate up to RADAU5_NS_MAX stages
+   * and RADAU5_NS_MAX+1 cont vectors so that ChangeOrder doesn't need
+   * to reallocate N_Vectors. */
   rmem->fn    = N_VClone(y0); if (!rmem->fn)    return RADAU5_MEM_FAIL;
-  for (int k = 0; k < rmem->ns; k++) {
+  for (int k = 0; k < RADAU5_NS_MAX; k++) {
     rmem->z[k] = N_VClone(y0); if (!rmem->z[k]) return RADAU5_MEM_FAIL;
     rmem->f[k] = N_VClone(y0); if (!rmem->f[k]) return RADAU5_MEM_FAIL;
   }
@@ -158,7 +178,7 @@ int Radau5Init(void* radau5_mem, Radau5RhsFn rhs, sunrealtype t0, N_Vector y0)
   rmem->tmp1  = N_VClone(y0); if (!rmem->tmp1)  return RADAU5_MEM_FAIL;
   rmem->tmp2  = N_VClone(y0); if (!rmem->tmp2)  return RADAU5_MEM_FAIL;
   rmem->tmp3  = N_VClone(y0); if (!rmem->tmp3)  return RADAU5_MEM_FAIL;
-  for (int k = 0; k <= rmem->ns; k++) {
+  for (int k = 0; k <= RADAU5_NS_MAX; k++) {
     rmem->cont[k] = N_VClone(y0); if (!rmem->cont[k]) return RADAU5_MEM_FAIL;
   }
 
@@ -187,7 +207,6 @@ int Radau5Init(void* radau5_mem, Radau5RhsFn rhs, sunrealtype t0, N_Vector y0)
   rmem->caljac = 1;
   rmem->skipdecomp = 0;
   rmem->tol_transformed = 0;
-  rmem->sparse_ls_finalized = 0;
   rmem->hacc   = SUN_RCONST(0.0);
   rmem->erracc = SUN_RCONST(0.0);
   rmem->faccon = SUN_RCONST(1.0);
@@ -199,9 +218,9 @@ int Radau5Init(void* radau5_mem, Radau5RhsFn rhs, sunrealtype t0, N_Vector y0)
 }
 
 /* ===========================================================================
- * Radau5SetLinearSolver  (dense only for Phase 1)
+ * Linear solver setup — user provides J template and optional M template
  * ===========================================================================*/
-int Radau5SetLinearSolver(void* radau5_mem, SUNMatrix J)
+int Radau5SetLinearSolver(void* radau5_mem, SUNMatrix J, SUNMatrix M)
 {
   if (!radau5_mem) return RADAU5_MEM_NULL;
   Radau5Mem rmem = RADAU5_MEM(radau5_mem);
@@ -226,8 +245,9 @@ int Radau5SetLinearSolver(void* radau5_mem, SUNMatrix J)
     rmem->E1 = SUNDenseMatrix(n, n, rmem->sunctx);
     if (!rmem->E1) return RADAU5_MEM_FAIL;
 
-    /* E2: 2n×2n dense, one per complex pair */
-    for (int pk = 0; pk < rmem->npairs; pk++) {
+    /* E2: 2n×2n dense, one per complex pair.
+     * For variable-order support, allocate up to RADAU5_NPAIRS_MAX pairs. */
+    for (int pk = 0; pk < RADAU5_NPAIRS_MAX; pk++) {
       rmem->E2[pk] = SUNDenseMatrix(2 * n, 2 * n, rmem->sunctx);
       if (!rmem->E2[pk]) return RADAU5_MEM_FAIL;
       rmem->y2n[pk] = N_VNew_Serial(2 * n, rmem->sunctx);
@@ -242,7 +262,7 @@ int Radau5SetLinearSolver(void* radau5_mem, SUNMatrix J)
     rmem->LS_E1 = SUNLinSol_Dense(rmem->ycur, rmem->E1, rmem->sunctx);
     if (!rmem->LS_E1) return RADAU5_MEM_FAIL;
 
-    for (int pk = 0; pk < rmem->npairs; pk++) {
+    for (int pk = 0; pk < RADAU5_NPAIRS_MAX; pk++) {
       rmem->LS_E2[pk] = SUNLinSol_Dense(rmem->y2n[pk], rmem->E2[pk], rmem->sunctx);
       if (!rmem->LS_E2[pk]) return RADAU5_MEM_FAIL;
     }
@@ -251,7 +271,7 @@ int Radau5SetLinearSolver(void* radau5_mem, SUNMatrix J)
     int ret;
     ret = SUNLinSolInitialize(rmem->LS_E1);
     if (ret != 0) return RADAU5_LSETUP_FAIL;
-    for (int pk = 0; pk < rmem->npairs; pk++) {
+    for (int pk = 0; pk < RADAU5_NPAIRS_MAX; pk++) {
       ret = SUNLinSolInitialize(rmem->LS_E2[pk]);
       if (ret != 0) return RADAU5_LSETUP_FAIL;
     }
@@ -275,30 +295,35 @@ int Radau5SetLinearSolver(void* radau5_mem, SUNMatrix J)
     if (!rmem->E1) return RADAU5_MEM_FAIL;
 
     /* E2: 2n×2n dense — the off-diagonal blocks at offset n make
-       the effective bandwidth ~n, so band storage is not beneficial */
-    rmem->E2[0] = SUNDenseMatrix(2 * n, 2 * n, rmem->sunctx);
-    if (!rmem->E2[0]) return RADAU5_MEM_FAIL;
-
-    /* y2n, rhs2, sol2 for the realified complex solve (length 2n) */
-    rmem->y2n[0] = N_VNew_Serial(2 * n, rmem->sunctx);
-    if (!rmem->y2n[0]) return RADAU5_MEM_FAIL;
-    rmem->rhs2[0] = N_VNew_Serial(2 * n, rmem->sunctx);
-    if (!rmem->rhs2[0]) return RADAU5_MEM_FAIL;
-    rmem->sol2[0] = N_VNew_Serial(2 * n, rmem->sunctx);
-    if (!rmem->sol2[0]) return RADAU5_MEM_FAIL;
+       the effective bandwidth ~n, so band storage is not beneficial.
+       Allocate all RADAU5_NPAIRS_MAX for variable-order support. */
+    for (int pk = 0; pk < RADAU5_NPAIRS_MAX; pk++) {
+      rmem->E2[pk] = SUNDenseMatrix(2 * n, 2 * n, rmem->sunctx);
+      if (!rmem->E2[pk]) return RADAU5_MEM_FAIL;
+      rmem->y2n[pk] = N_VNew_Serial(2 * n, rmem->sunctx);
+      if (!rmem->y2n[pk]) return RADAU5_MEM_FAIL;
+      rmem->rhs2[pk] = N_VNew_Serial(2 * n, rmem->sunctx);
+      if (!rmem->rhs2[pk]) return RADAU5_MEM_FAIL;
+      rmem->sol2[pk] = N_VNew_Serial(2 * n, rmem->sunctx);
+      if (!rmem->sol2[pk]) return RADAU5_MEM_FAIL;
+    }
 
     /* Linear solvers: band for E1, dense for E2 */
     rmem->LS_E1 = SUNLinSol_Band(rmem->ycur, rmem->E1, rmem->sunctx);
     if (!rmem->LS_E1) return RADAU5_MEM_FAIL;
 
-    rmem->LS_E2[0] = SUNLinSol_Dense(rmem->y2n[0], rmem->E2[0], rmem->sunctx);
-    if (!rmem->LS_E2[0]) return RADAU5_MEM_FAIL;
+    for (int pk = 0; pk < RADAU5_NPAIRS_MAX; pk++) {
+      rmem->LS_E2[pk] = SUNLinSol_Dense(rmem->y2n[pk], rmem->E2[pk], rmem->sunctx);
+      if (!rmem->LS_E2[pk]) return RADAU5_MEM_FAIL;
+    }
 
     int ret;
     ret = SUNLinSolInitialize(rmem->LS_E1);
     if (ret != 0) return RADAU5_LSETUP_FAIL;
-    ret = SUNLinSolInitialize(rmem->LS_E2[0]);
-    if (ret != 0) return RADAU5_LSETUP_FAIL;
+    for (int pk = 0; pk < RADAU5_NPAIRS_MAX; pk++) {
+      ret = SUNLinSolInitialize(rmem->LS_E2[pk]);
+      if (ret != 0) return RADAU5_LSETUP_FAIL;
+    }
 
   } else if (mid == SUNMATRIX_SPARSE) {
     sunindextype n = rmem->n;
@@ -315,36 +340,53 @@ int Radau5SetLinearSolver(void* radau5_mem, SUNMatrix J)
     if (!rmem->Jsaved) return RADAU5_MEM_FAIL;
     SUNMatCopy(J, rmem->Jsaved);
 
-    /* E1: same structure as J */
-    rmem->E1 = SUNMatClone(J);
-    if (!rmem->E1) return RADAU5_MEM_FAIL;
-    SUNMatCopy(J, rmem->E1);  /* copy structure; values will be overwritten */
+    /* E1 and E2 allocation: if M is also sparse, use union(J,M) pattern
+       immediately; otherwise use J's pattern alone. */
+    sunindextype nnz_E2;
+    if (M != NULL && SUNMatGetID(M) == SUNMATRIX_SPARSE) {
+      /* E1: union(J, M) pattern */
+      rmem->E1 = radau5_SparseUnion(J, M, rmem->sunctx);
+      if (!rmem->E1) return RADAU5_MEM_FAIL;
 
-    /* E2: 2n×2n sparse CSC.
-       NNZ estimate: 2 copies of J pattern + 4n diagonal entries (worst case) */
-    sunindextype nnz_E2 = 2 * nnz_J + 4 * n;
-    rmem->E2[0] = SUNSparseMatrix(2 * n, 2 * n, nnz_E2, CSC_MAT, rmem->sunctx);
-    if (!rmem->E2[0]) return RADAU5_MEM_FAIL;
+      sunindextype nnz_union = SM_INDEXPTRS_S(rmem->E1)[n];
+      sunindextype nnz_M = SM_INDEXPTRS_S(M)[n];
+      nnz_E2 = 2 * nnz_union + 2 * nnz_M;
+    } else {
+      /* E1: same structure as J */
+      rmem->E1 = SUNMatClone(J);
+      if (!rmem->E1) return RADAU5_MEM_FAIL;
+      SUNMatCopy(J, rmem->E1);  /* copy structure; values will be overwritten */
 
-    /* Vectors of length 2n */
-    rmem->y2n[0]  = N_VNew_Serial(2 * n, rmem->sunctx);
-    if (!rmem->y2n[0]) return RADAU5_MEM_FAIL;
-    rmem->rhs2[0] = N_VNew_Serial(2 * n, rmem->sunctx);
-    if (!rmem->rhs2[0]) return RADAU5_MEM_FAIL;
-    rmem->sol2[0] = N_VNew_Serial(2 * n, rmem->sunctx);
-    if (!rmem->sol2[0]) return RADAU5_MEM_FAIL;
+      nnz_E2 = 2 * nnz_J + 4 * n;  /* 2 diagonal blocks + 2 off-diag identity blocks */
+    }
+
+    /* E2: 2n×2n sparse CSC — allocate RADAU5_NPAIRS_MAX for variable-order. */
+    for (int pk = 0; pk < RADAU5_NPAIRS_MAX; pk++) {
+      rmem->E2[pk] = SUNSparseMatrix(2 * n, 2 * n, nnz_E2, CSC_MAT, rmem->sunctx);
+      if (!rmem->E2[pk]) return RADAU5_MEM_FAIL;
+      rmem->y2n[pk]  = N_VNew_Serial(2 * n, rmem->sunctx);
+      if (!rmem->y2n[pk]) return RADAU5_MEM_FAIL;
+      rmem->rhs2[pk] = N_VNew_Serial(2 * n, rmem->sunctx);
+      if (!rmem->rhs2[pk]) return RADAU5_MEM_FAIL;
+      rmem->sol2[pk] = N_VNew_Serial(2 * n, rmem->sunctx);
+      if (!rmem->sol2[pk]) return RADAU5_MEM_FAIL;
+    }
 
     /* KLU solvers */
     rmem->LS_E1 = SUNLinSol_KLU(rmem->ycur, rmem->E1, rmem->sunctx);
     if (!rmem->LS_E1) return RADAU5_MEM_FAIL;
-    rmem->LS_E2[0] = SUNLinSol_KLU(rmem->y2n[0], rmem->E2[0], rmem->sunctx);
-    if (!rmem->LS_E2[0]) return RADAU5_MEM_FAIL;
+    for (int pk = 0; pk < RADAU5_NPAIRS_MAX; pk++) {
+      rmem->LS_E2[pk] = SUNLinSol_KLU(rmem->y2n[pk], rmem->E2[pk], rmem->sunctx);
+      if (!rmem->LS_E2[pk]) return RADAU5_MEM_FAIL;
+    }
 
     int ret;
     ret = SUNLinSolInitialize(rmem->LS_E1);
     if (ret != 0) return RADAU5_LSETUP_FAIL;
-    ret = SUNLinSolInitialize(rmem->LS_E2[0]);
-    if (ret != 0) return RADAU5_LSETUP_FAIL;
+    for (int pk = 0; pk < RADAU5_NPAIRS_MAX; pk++) {
+      ret = SUNLinSolInitialize(rmem->LS_E2[pk]);
+      if (ret != 0) return RADAU5_LSETUP_FAIL;
+    }
 
   } else {
     return RADAU5_ILL_INPUT;
@@ -415,44 +457,6 @@ int Radau5Solve(void* radau5_mem, sunrealtype tout, N_Vector yout,
                          rmem->tmp1, rmem->tmp2, rmem->tmp3);
     if (mret != 0) return RADAU5_RHSFUNC_FAIL;
     rmem->mass_evaluated = 1;
-  }
-
-  /* Rebuild E1/E2 with union(J,M) pattern when M is sparse.
-   * This must happen after mass matrix evaluation and before the main loop.
-   * Radau5SetLinearSolver runs before Radau5SetMassFn, so M is unknown at
-   * that point — we defer the pattern merge to here (once). */
-  if (rmem->mat_id == SUNMATRIX_SPARSE && rmem->M != NULL
-      && SUNMatGetID(rmem->M) == SUNMATRIX_SPARSE
-      && !rmem->sparse_ls_finalized)
-  {
-    sunindextype n_loc = rmem->n;
-
-    /* E1: union(J, M) pattern */
-    SUNMatrix E1_new = radau5_SparseUnion(rmem->J, rmem->M, rmem->sunctx);
-    if (!E1_new) return RADAU5_MEM_FAIL;
-    SUNMatDestroy(rmem->E1);
-    rmem->E1 = E1_new;
-
-    /* E2: 2*nnz_union (diagonal blocks) + 2*nnz_M (off-diagonal blocks) */
-    sunindextype nnz_union = SM_INDEXPTRS_S(E1_new)[n_loc];
-    sunindextype nnz_M = SM_INDEXPTRS_S(rmem->M)[n_loc];
-    sunindextype nnz_E2 = 2 * nnz_union + 2 * nnz_M;
-    SUNMatDestroy(rmem->E2[0]);
-    rmem->E2[0] = SUNSparseMatrix(2 * n_loc, 2 * n_loc, nnz_E2, CSC_MAT,
-                                rmem->sunctx);
-    if (!rmem->E2[0]) return RADAU5_MEM_FAIL;
-
-    /* Recreate KLU solvers for the new matrices */
-    SUNLinSolFree(rmem->LS_E1);
-    SUNLinSolFree(rmem->LS_E2[0]);
-    rmem->LS_E1 = SUNLinSol_KLU(rmem->ycur, rmem->E1, rmem->sunctx);
-    if (!rmem->LS_E1) return RADAU5_MEM_FAIL;
-    rmem->LS_E2[0] = SUNLinSol_KLU(rmem->y2n[0], rmem->E2[0], rmem->sunctx);
-    if (!rmem->LS_E2[0]) return RADAU5_MEM_FAIL;
-    SUNLinSolInitialize(rmem->LS_E1);
-    SUNLinSolInitialize(rmem->LS_E2[0]);
-
-    rmem->sparse_ls_finalized = 1;
   }
 
   /* Evaluate f(t0, y0) -> fn */
@@ -601,21 +605,45 @@ int Radau5CalcIC(void* radau5_mem, N_Vector id)
 
 /* ===========================================================================
  * Radau5Contr — continuous output interpolation
+ *
+ * General Horner evaluation on Newton divided-difference form.
+ * Fortran CONTRA function (radau.f lines 1953-1972):
+ *
+ *   S = (X - XSOL)/HSOL + 1
+ *   CONTRA = CONT(I+NS*NN)
+ *   DO K=NS-1,0,-1
+ *     CONTRA = CONT(I+K*NN) + (S - C(NS-K)) * CONTRA
+ *   END DO
+ *
+ * Node mapping: Fortran C(0)=0, C(1..NS)=c[0..ns-1].
+ *   Fortran C(NS-K) for K=0..NS-1:
+ *     K=0 → C(NS) = c[ns-1] = 1
+ *     K=1..NS-1 → C(NS-K) = c[ns-k-1]
+ *   For K=NS (not reached in loop since K goes NS-1..0):
+ *     would be C(0) = 0
+ *
+ * Our cont layout: cont[0]=ycur (node=c[ns-1]=1), cont[1..ns]=divided-diff.
  * ===========================================================================*/
 sunrealtype Radau5Contr(void* radau5_mem, sunindextype i, sunrealtype t)
 {
   if (!radau5_mem) return SUN_RCONST(0.0);
   Radau5Mem rmem = RADAU5_MEM(radau5_mem);
+  int ns = rmem->ns;
 
-  sunrealtype s = (t - rmem->xsol) / rmem->hsol;
+  sunrealtype s = (t - rmem->xsol) / rmem->hsol + SUN_RCONST(1.0);
 
-  sunrealtype* c1 = N_VGetArrayPointer(rmem->cont[0]);
-  sunrealtype* c2 = N_VGetArrayPointer(rmem->cont[1]);
-  sunrealtype* c3 = N_VGetArrayPointer(rmem->cont[2]);
-  sunrealtype* c4 = N_VGetArrayPointer(rmem->cont[3]);
+  /* Cache cont pointers to avoid repeated N_VGetArrayPointer calls */
+  sunrealtype* contd[RADAU5_NS_MAX + 1];
+  for (int k = 0; k <= ns; k++)
+    contd[k] = N_VGetArrayPointer(rmem->cont[k]);
 
-  /* Horner evaluation of degree-4 polynomial */
-  return c1[i] + s * (c2[i] + (s - (rmem->c[1] - SUN_RCONST(1.0))) * (c3[i] + (s - (rmem->c[0] - SUN_RCONST(1.0))) * c4[i]));
+  /* Horner descent on Newton divided-difference form */
+  sunrealtype val = contd[ns][i];
+  for (int k = ns - 1; k >= 1; k--)
+    val = contd[k][i] + (s - rmem->c[ns - k - 1]) * val;
+  val = contd[0][i] + (s - rmem->c[ns - 1]) * val;
+
+  return val;
 }
 
 /* ===========================================================================
@@ -762,6 +790,34 @@ int Radau5SetNumStages(void* radau5_mem, int ns)
   if (rmem->setup_done) return RADAU5_ILL_INPUT; /* must be called before Init */
   rmem->ns = ns;
   rmem->npairs = (ns - 1) / 2;
+  rmem->nsmin = ns;
+  rmem->nsmax = ns;
+  rmem->variab = 0;
+  return RADAU5_SUCCESS;
+}
+
+/* ===========================================================================
+ * Radau5SetOrderLimits — enable variable-order mode
+ *
+ * Sets nsmin and nsmax. Must be called BEFORE Radau5Init.
+ * nsmin, nsmax ∈ {3, 5, 7} with nsmin <= nsmax.
+ * If nsmin < nsmax, variable order is enabled.
+ * The initial ns is set to nsmin.
+ * ===========================================================================*/
+int Radau5SetOrderLimits(void* radau5_mem, int nsmin, int nsmax)
+{
+  if (!radau5_mem) return RADAU5_MEM_NULL;
+  Radau5Mem rmem = RADAU5_MEM(radau5_mem);
+  if (rmem->setup_done) return RADAU5_ILL_INPUT;
+  if (nsmin != 3 && nsmin != 5 && nsmin != 7) return RADAU5_ILL_INPUT;
+  if (nsmax != 3 && nsmax != 5 && nsmax != 7) return RADAU5_ILL_INPUT;
+  if (nsmin > nsmax) return RADAU5_ILL_INPUT;
+
+  rmem->nsmin  = nsmin;
+  rmem->nsmax  = nsmax;
+  rmem->variab = (nsmin < nsmax) ? 1 : 0;
+  rmem->ns     = nsmin;
+  rmem->npairs = (nsmin - 1) / 2;
   return RADAU5_SUCCESS;
 }
 

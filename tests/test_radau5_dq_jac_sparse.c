@@ -78,7 +78,7 @@ int main(void)
   Radau5Init(mem, rhs_poly, 0.0, y0);
   Radau5SStolerances(mem, 1.0e-8, 1.0e-10);
   Radau5SetInitStep(mem, 0.01);
-  Radau5SetLinearSolver(mem, Jt);
+  Radau5SetLinearSolver(mem, Jt, NULL);
 
   /* Register sparsity pattern — triggers column grouping */
   int ret = Radau5SetSparsityPattern(mem, Jt);

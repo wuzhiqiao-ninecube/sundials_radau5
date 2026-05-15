@@ -57,13 +57,11 @@ int main(void)
 
   Radau5Mem rmem = RADAU5_MEM(mem);
 
-  /* --- Collocation nodes --- */
+  /* --- Collocation nodes (ns=3) --- */
   sunrealtype sq6 = sqrt(6.0);
-  failures += check("c1", rmem->c1, (4.0 - sq6) / 10.0);
-  failures += check("c2", rmem->c2, (4.0 + sq6) / 10.0);
-  failures += check("c1m1", rmem->c1m1, rmem->c1 - 1.0);
-  failures += check("c2m1", rmem->c2m1, rmem->c2 - 1.0);
-  failures += check("c1mc2", rmem->c1mc2, rmem->c1 - rmem->c2);
+  failures += check("c[0]", rmem->c[0], (4.0 - sq6) / 10.0);
+  failures += check("c[1]", rmem->c[1], (4.0 + sq6) / 10.0);
+  failures += check("c[2]", rmem->c[2], 1.0);
 
   /* --- Eigenvalues of A^{-1} (after inversion) --- */
   sunrealtype u1_raw = (6.0 + pow(81.0, 1.0/3.0) - pow(9.0, 1.0/3.0)) / 30.0;
@@ -71,56 +69,49 @@ int main(void)
   sunrealtype beta_raw = (pow(81.0, 1.0/3.0) + pow(9.0, 1.0/3.0)) * sqrt(3.0) / 60.0;
   sunrealtype cno = alph_raw * alph_raw + beta_raw * beta_raw;
 
-  failures += check("u1",   rmem->u1,   1.0 / u1_raw);
-  failures += check("alph", rmem->alph, alph_raw / cno);
-  failures += check("beta", rmem->beta, beta_raw / cno);
+  failures += check("u1",       rmem->u1,          1.0 / u1_raw);
+  failures += check("alph[0]",  rmem->alph[0],     alph_raw / cno);
+  failures += check("beta[0]",  rmem->beta_eig[0], beta_raw / cno);
 
   /* --- Error coefficients --- */
-  failures += check("dd1", rmem->dd1, -(13.0 + 7.0 * sq6) / 3.0);
-  failures += check("dd2", rmem->dd2, (-13.0 + 7.0 * sq6) / 3.0);
-  failures += check("dd3", rmem->dd3, -1.0 / 3.0);
+  failures += check("dd[0]", rmem->dd[0], -(13.0 + 7.0 * sq6) / 3.0);
+  failures += check("dd[1]", rmem->dd[1], (-13.0 + 7.0 * sq6) / 3.0);
+  failures += check("dd[2]", rmem->dd[2], -1.0 / 3.0);
 
-  /* --- Eigenvector matrix T (Fortran hardcoded values) --- */
-  failures += check("T11", rmem->T11,  9.1232394870892942792e-02);
-  failures += check("T12", rmem->T12, -0.14125529502095420843);
-  failures += check("T13", rmem->T13, -3.0029194105147424492e-02);
-  failures += check("T21", rmem->T21,  0.24171793270710701896);
-  failures += check("T22", rmem->T22,  0.20412935229379993199);
-  failures += check("T23", rmem->T23,  0.38294211275726193779);
-  failures += check("T31", rmem->T31,  0.96604818261509293619);
+  /* --- Eigenvector matrix T (row-major T_mat[ns*ns]) --- */
+  failures += check("T[0][0]", rmem->T_mat[0],  9.1232394870892942792e-02);
+  failures += check("T[0][1]", rmem->T_mat[1], -0.14125529502095420843);
+  failures += check("T[0][2]", rmem->T_mat[2], -3.0029194105147424492e-02);
+  failures += check("T[1][0]", rmem->T_mat[3],  0.24171793270710701896);
+  failures += check("T[1][1]", rmem->T_mat[4],  0.20412935229379993199);
+  failures += check("T[1][2]", rmem->T_mat[5],  0.38294211275726193779);
+  failures += check("T[2][0]", rmem->T_mat[6],  0.96604818261509293619);
 
-  /* --- Inverse eigenvector matrix TI --- */
-  failures += check("TI11", rmem->TI11,  4.3255798900631553510);
-  failures += check("TI12", rmem->TI12,  0.33919925181580986954);
-  failures += check("TI13", rmem->TI13,  0.54177053993587487119);
-  failures += check("TI21", rmem->TI21, -4.1787185915519047273);
-  failures += check("TI22", rmem->TI22, -0.32768282076106238708);
-  failures += check("TI23", rmem->TI23,  0.47662355450055045196);
-  failures += check("TI31", rmem->TI31, -0.50287263494578687595);
-  failures += check("TI32", rmem->TI32,  2.5719269498556054292);
-  failures += check("TI33", rmem->TI33, -0.59603920482822492497);
+  /* --- Inverse eigenvector matrix TI (row-major TI_mat[ns*ns]) --- */
+  failures += check("TI[0][0]", rmem->TI_mat[0],  4.3255798900631553510);
+  failures += check("TI[0][1]", rmem->TI_mat[1],  0.33919925181580986954);
+  failures += check("TI[0][2]", rmem->TI_mat[2],  0.54177053993587487119);
+  failures += check("TI[1][0]", rmem->TI_mat[3], -4.1787185915519047273);
+  failures += check("TI[1][1]", rmem->TI_mat[4], -0.32768282076106238708);
+  failures += check("TI[1][2]", rmem->TI_mat[5],  0.47662355450055045196);
+  failures += check("TI[2][0]", rmem->TI_mat[6], -0.50287263494578687595);
+  failures += check("TI[2][1]", rmem->TI_mat[7],  2.5719269498556054292);
+  failures += check("TI[2][2]", rmem->TI_mat[8], -0.59603920482822492497);
 
   /* --- Verify TI * T = I (3x3 identity) ---
-   * T has T32=1, T33=0 implicit in the Fortran.
-   * T = [ T11  T12  T13 ]    TI = [ TI11  TI12  TI13 ]
-   *     [ T21  T22  T23 ]         [ TI21  TI22  TI23 ]
-   *     [ T31   1    0  ]         [ TI31  TI32  TI33 ]
-   */
-  sunrealtype T[3][3] = {
-    { rmem->T11, rmem->T12, rmem->T13 },
-    { rmem->T21, rmem->T22, rmem->T23 },
-    { rmem->T31, 1.0,       0.0       }
-  };
-  sunrealtype TI[3][3] = {
-    { rmem->TI11, rmem->TI12, rmem->TI13 },
-    { rmem->TI21, rmem->TI22, rmem->TI23 },
-    { rmem->TI31, rmem->TI32, rmem->TI33 }
-  };
+   * T has T[2][1]=1, T[2][2]=0 implicit in the Fortran. */
+  int ns = rmem->ns;
+  sunrealtype T[3][3], TI[3][3];
+  for (int r = 0; r < ns; r++)
+    for (int c = 0; c < ns; c++) {
+      T[r][c]  = rmem->T_mat[r * ns + c];
+      TI[r][c] = rmem->TI_mat[r * ns + c];
+    }
 
-  for (int r = 0; r < 3; r++) {
-    for (int c = 0; c < 3; c++) {
+  for (int r = 0; r < ns; r++) {
+    for (int c = 0; c < ns; c++) {
       sunrealtype sum = 0.0;
-      for (int k = 0; k < 3; k++)
+      for (int k = 0; k < ns; k++)
         sum += TI[r][k] * T[k][c];
       sunrealtype expected = (r == c) ? 1.0 : 0.0;
       char buf[64];

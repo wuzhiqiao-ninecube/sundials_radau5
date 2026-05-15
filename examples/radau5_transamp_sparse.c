@@ -188,16 +188,21 @@ int main(int argc, char* argv[])
   sunrealtype atol_val = 1.0e-6;
   sunrealtype h0   = 1.0e-6;
   int use_schur    = 0;
+  int nsmin        = 3;
+  int nsmax        = 7;
   if (argc > 1) rtol      = atof(argv[1]);
   if (argc > 2) atol_val  = atof(argv[2]);
   if (argc > 3) h0        = atof(argv[3]);
   if (argc > 4) use_schur = atoi(argv[4]);
+  if (argc > 5) nsmin     = atoi(argv[5]);
+  if (argc > 6) nsmax     = atoi(argv[6]);
 
   SUNContext sunctx;
   SUNContext_Create(SUN_COMM_NULL, &sunctx);
 
   int n = NEQ;
   void* mem = Radau5Create(sunctx);
+  Radau5SetOrderLimits(mem, nsmin, nsmax);
 
   /* Initial conditions */
   N_Vector y0 = N_VNew_Serial(n, sunctx);
@@ -238,10 +243,6 @@ int main(int argc, char* argv[])
     for (int k = 0; k < J_NNZ; k++) dat[k] = 0.0;
   }
 
-  Radau5SetLinearSolver(mem, Jt);
-  Radau5SetSchurDecomp(mem, use_schur);
-  Radau5SetJacFn(mem, jac_transamp);
-
   /* Sparse mass matrix template (CSC, 8x8, 14 NNZ) */
   SUNMatrix Mt = SUNSparseMatrix(n, n, M_NNZ, CSC_MAT, sunctx);
   static const sunindextype m_colptrs[NEQ + 1] = {
@@ -265,6 +266,10 @@ int main(int argc, char* argv[])
     sunrealtype* dat = SM_DATA_S(Mt);
     for (int k = 0; k < M_NNZ; k++) dat[k] = 0.0;
   }
+
+  Radau5SetLinearSolver(mem, Jt, Mt);
+  Radau5SetSchurDecomp(mem, use_schur);
+  Radau5SetJacFn(mem, jac_transamp);
 
   Radau5SetMassFn(mem, mas_transamp, Mt);
 

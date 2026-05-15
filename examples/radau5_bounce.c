@@ -55,13 +55,19 @@ static int rootfn(sunrealtype t, N_Vector y, sunrealtype* gout, void* user_data)
   return 0;
 }
 
-int main(void)
+int main(int argc, char* argv[])
 {
+  int nsmin = 3;
+  int nsmax = 7;
+  if (argc > 1) nsmin = atoi(argv[1]);
+  if (argc > 2) nsmax = atoi(argv[2]);
+
   SUNContext sunctx;
   SUNContext_Create(SUN_COMM_NULL, &sunctx);
 
   /* Create solver */
   void* mem = Radau5Create(sunctx);
+  Radau5SetOrderLimits(mem, nsmin, nsmax);
 
   /* Initial conditions: height=10, velocity=0 */
   N_Vector y = N_VNew_Serial(2, sunctx);
@@ -73,7 +79,7 @@ int main(void)
 
   /* Linear solver (dense 2x2) */
   SUNMatrix J = SUNDenseMatrix(2, 2, sunctx);
-  Radau5SetLinearSolver(mem, J);
+  Radau5SetLinearSolver(mem, J, NULL);
   Radau5SetJacFn(mem, jac);
 
   /* Tolerances */
@@ -114,7 +120,7 @@ int main(void)
       /* Reset solver at discontinuity (velocity jump) */
       N_VScale(1.0, yout, y);
       Radau5Init(mem, rhs, t, y);
-      Radau5SetLinearSolver(mem, J);
+      Radau5SetLinearSolver(mem, J, NULL);
       Radau5SetJacFn(mem, jac);
       Radau5SStolerances(mem, 1.0e-10, 1.0e-12);
       Radau5SetInitStep(mem, 1.0e-4);

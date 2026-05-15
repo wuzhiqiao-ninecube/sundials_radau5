@@ -49,7 +49,7 @@ int main(void)
   Radau5Init(mem, dummy_rhs, 0.0, y0);
 
   SUNMatrix Jtemplate = SUNDenseMatrix(n, n, sunctx);
-  Radau5SetLinearSolver(mem, Jtemplate);
+  Radau5SetLinearSolver(mem, Jtemplate, NULL);
 
   Radau5Mem rmem = RADAU5_MEM(mem);
 
@@ -61,15 +61,10 @@ int main(void)
   SM_ELEMENT_D(rmem->J, 1, 1) = 4.0;
 
   /* --- Test 1: Identity mass (M == NULL) ---
-   * E2 = [ alphn*I - J,   -betan*I ]
-   *      [ betan*I,     alphn*I - J ]
-   *
-   * Top-left:     alphn*delta(i,j) - J(i,j)
-   * Top-right:   -betan*delta(i,j)
-   * Bottom-left:  betan*delta(i,j)
-   * Bottom-right: alphn*delta(i,j) - J(i,j)
+   * E2[0] = [ alphn*I - J,   -betan*I ]
+   *         [ betan*I,     alphn*I - J ]
    */
-  radau5_BuildE2(rmem, alphn, betan);
+  radau5_BuildE2(rmem, 0, alphn, betan);
 
   sunrealtype Jv[2][2] = {{1,2},{3,4}};
 
@@ -83,16 +78,16 @@ int main(void)
 
       char buf[64];
       sprintf(buf, "E2_TL[%d][%d]", (int)i, (int)j);
-      CHECK_VAL(buf, SM_ELEMENT_D(rmem->E2, i, j), e_tl);
+      CHECK_VAL(buf, SM_ELEMENT_D(rmem->E2[0], i, j), e_tl);
 
       sprintf(buf, "E2_TR[%d][%d+n]", (int)i, (int)j);
-      CHECK_VAL(buf, SM_ELEMENT_D(rmem->E2, i, j + n), e_tr);
+      CHECK_VAL(buf, SM_ELEMENT_D(rmem->E2[0], i, j + n), e_tr);
 
       sprintf(buf, "E2_BL[%d+n][%d]", (int)i, (int)j);
-      CHECK_VAL(buf, SM_ELEMENT_D(rmem->E2, i + n, j), e_bl);
+      CHECK_VAL(buf, SM_ELEMENT_D(rmem->E2[0], i + n, j), e_bl);
 
       sprintf(buf, "E2_BR[%d+n][%d+n]", (int)i, (int)j);
-      CHECK_VAL(buf, SM_ELEMENT_D(rmem->E2, i + n, j + n), e_br);
+      CHECK_VAL(buf, SM_ELEMENT_D(rmem->E2[0], i + n, j + n), e_br);
     }
   }
 
@@ -104,7 +99,7 @@ int main(void)
   SM_ELEMENT_D(rmem->M, 0, 0) = 2.0;
   SM_ELEMENT_D(rmem->M, 1, 1) = 3.0;
 
-  radau5_BuildE2(rmem, alphn, betan);
+  radau5_BuildE2(rmem, 0, alphn, betan);
 
   sunrealtype Mv[2][2] = {{2,0},{0,3}};
 
@@ -117,16 +112,16 @@ int main(void)
 
       char buf[64];
       sprintf(buf, "E2_mass_TL[%d][%d]", (int)i, (int)j);
-      CHECK_VAL(buf, SM_ELEMENT_D(rmem->E2, i, j), e_tl);
+      CHECK_VAL(buf, SM_ELEMENT_D(rmem->E2[0], i, j), e_tl);
 
       sprintf(buf, "E2_mass_TR[%d][%d+n]", (int)i, (int)j);
-      CHECK_VAL(buf, SM_ELEMENT_D(rmem->E2, i, j + n), e_tr);
+      CHECK_VAL(buf, SM_ELEMENT_D(rmem->E2[0], i, j + n), e_tr);
 
       sprintf(buf, "E2_mass_BL[%d+n][%d]", (int)i, (int)j);
-      CHECK_VAL(buf, SM_ELEMENT_D(rmem->E2, i + n, j), e_bl);
+      CHECK_VAL(buf, SM_ELEMENT_D(rmem->E2[0], i + n, j), e_bl);
 
       sprintf(buf, "E2_mass_BR[%d+n][%d+n]", (int)i, (int)j);
-      CHECK_VAL(buf, SM_ELEMENT_D(rmem->E2, i + n, j + n), e_br);
+      CHECK_VAL(buf, SM_ELEMENT_D(rmem->E2[0], i + n, j + n), e_br);
     }
   }
 

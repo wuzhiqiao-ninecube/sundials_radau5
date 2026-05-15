@@ -48,10 +48,14 @@ int main(int argc, char* argv[])
   sunrealtype atol_val = 1.0e-12;
   sunrealtype h0   = 1.0e-6;
   int use_schur    = 0;
+  int nsmin        = 3;
+  int nsmax        = 7;
   if (argc > 1) rtol      = atof(argv[1]);
   if (argc > 2) atol_val  = atof(argv[2]);
   if (argc > 3) h0        = atof(argv[3]);
   if (argc > 4) use_schur = atoi(argv[4]);
+  if (argc > 5) nsmin     = atoi(argv[5]);
+  if (argc > 6) nsmax     = atoi(argv[6]);
 
   SUNContext sunctx;
   SUNContext_Create(SUN_COMM_NULL, &sunctx);
@@ -68,12 +72,13 @@ int main(int argc, char* argv[])
     y0d[i] = sin(PI * (i + 1) * dx);
 
   void* mem = Radau5Create(sunctx);
+  Radau5SetOrderLimits(mem, nsmin, nsmax);
   Radau5Init(mem, rhs_heat, 0.0, y0);
   Radau5SetUserData(mem, &hdata);
 
   /* Band Jacobian template: tridiagonal (mu=1, ml=1) */
   SUNMatrix Jt = SUNBandMatrix(n, 1, 1, sunctx);
-  Radau5SetLinearSolver(mem, Jt);
+  Radau5SetLinearSolver(mem, Jt, NULL);
   Radau5SetSchurDecomp(mem, use_schur);
 
   /* Use DQ Jacobian (no analytic Jacobian) */

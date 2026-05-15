@@ -83,9 +83,11 @@ int Radau5Init(void* radau5_mem, Radau5RhsFn rhs, sunrealtype t0,
                N_Vector y0);
 
 /* ---------------------------------------------------------------------------
- * Linear solver setup — user provides J template, solver builds E1, E2, LS
+ * Linear solver setup — user provides J template and optional M template.
+ * M is only needed when both J and M are sparse (for union sparsity pattern).
+ * Pass NULL for M when J is dense/band or when there is no mass matrix.
  * ---------------------------------------------------------------------------*/
-int Radau5SetLinearSolver(void* radau5_mem, SUNMatrix J);
+int Radau5SetLinearSolver(void* radau5_mem, SUNMatrix J, SUNMatrix M);
 
 /* ---------------------------------------------------------------------------
  * Optional setters
@@ -107,6 +109,7 @@ int Radau5SetSchurDecomp(void* radau5_mem, int use_schur);
 int Radau5ResetForDiscontinuity(void* radau5_mem, sunrealtype h0);
 int Radau5SetSparsityPattern(void* radau5_mem, SUNMatrix S);
 int Radau5SetNumStages(void* radau5_mem, int ns);
+int Radau5SetOrderLimits(void* radau5_mem, int nsmin, int nsmax);
 int Radau5SStolerances(void* radau5_mem, sunrealtype rtol, sunrealtype atol);
 int Radau5SVtolerances(void* radau5_mem, N_Vector rtol, N_Vector atol);
 

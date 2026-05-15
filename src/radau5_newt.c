@@ -397,6 +397,7 @@ int radau5_Newton(Radau5Mem rmem, int* newt_out)
           rmem->h    *= rmem->hhfac;
           rmem->reject = 1;
           rmem->last   = 0;
+          if (rmem->hhfac <= SUN_RCONST(0.5)) rmem->unexn = 1;
           *newt_out    = newt;
           if (n > 1024) free(mf_buf);
           return RADAU5_NEWT_PREDICT;

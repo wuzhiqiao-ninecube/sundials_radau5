@@ -123,23 +123,28 @@ int main(int argc, char* argv[])
   sunrealtype atol_val = 1.0e-6;
   sunrealtype h0   = 1.0e-6;
   int use_schur    = 0;
+  int nsmin        = 3;
+  int nsmax        = 7;
   if (argc > 1) rtol      = atof(argv[1]);
   if (argc > 2) atol_val  = atof(argv[2]);
   if (argc > 3) h0        = atof(argv[3]);
   if (argc > 4) use_schur = atoi(argv[4]);
+  if (argc > 5) nsmin     = atoi(argv[5]);
+  if (argc > 6) nsmax     = atoi(argv[6]);
 
   SUNContext sunctx;
   SUNContext_Create(SUN_COMM_NULL, &sunctx);
 
   int n = BEAM_NN;
   void* mem = Radau5Create(sunctx);
+  Radau5SetOrderLimits(mem, nsmin, nsmax);
   N_Vector y0 = N_VNew_Serial(n, sunctx);
   sunrealtype* y0d = N_VGetArrayPointer(y0);
   for (int i = 0; i < n; i++) y0d[i] = 0.0;
 
   Radau5Init(mem, rhs, 0.0, y0);
   SUNMatrix Jt = SUNDenseMatrix(n, n, sunctx);
-  Radau5SetLinearSolver(mem, Jt);
+  Radau5SetLinearSolver(mem, Jt, NULL);
   Radau5SetSchurDecomp(mem, use_schur);
   /* Use DQ Jacobian (no analytic Jacobian provided) */
   Radau5SStolerances(mem, rtol, atol_val);

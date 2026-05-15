@@ -208,10 +208,14 @@ int main(int argc, char* argv[])
   sunrealtype atol_val = 1.0e-7;
   sunrealtype h0   = 1.0e-6;
   int use_schur    = 0;
+  int nsmin        = 3;
+  int nsmax        = 7;
   if (argc > 1) rtol      = atof(argv[1]);
   if (argc > 2) atol_val  = atof(argv[2]);
   if (argc > 3) h0        = atof(argv[3]);
   if (argc > 4) use_schur = atoi(argv[4]);
+  if (argc > 5) nsmin     = atoi(argv[5]);
+  if (argc > 6) nsmax     = atoi(argv[6]);
 
   SUNContext sunctx;
   SUNContext_Create(SUN_COMM_NULL, &sunctx);
@@ -220,10 +224,11 @@ int main(int argc, char* argv[])
   N_VConst(0.0, y0);
 
   void* mem = Radau5Create(sunctx);
+  Radau5SetOrderLimits(mem, nsmin, nsmax);
   Radau5Init(mem, rhs, 0.0, y0);
 
   SUNMatrix Jt = SUNDenseMatrix(NEQ, NEQ, sunctx);
-  Radau5SetLinearSolver(mem, Jt);
+  Radau5SetLinearSolver(mem, Jt, NULL);
   Radau5SetSchurDecomp(mem, use_schur);
   Radau5SetJacFn(mem, jac);
   Radau5SStolerances(mem, rtol, atol_val);

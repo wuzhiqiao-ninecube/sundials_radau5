@@ -46,12 +46,12 @@ int main(void)
   CHECK(ret == RADAU5_SUCCESS, "Init with valid inputs should succeed");
 
   /* --- Radau5SetLinearSolver with NULL J should fail --- */
-  ret = Radau5SetLinearSolver(mem, NULL);
+  ret = Radau5SetLinearSolver(mem, NULL, NULL);
   CHECK(ret == RADAU5_ILL_INPUT, "SetLinearSolver with NULL J should fail");
 
   /* --- Radau5SetLinearSolver with valid dense J --- */
   SUNMatrix J = SUNDenseMatrix(2, 2, sunctx);
-  ret = Radau5SetLinearSolver(mem, J);
+  ret = Radau5SetLinearSolver(mem, J, NULL);
   CHECK(ret == RADAU5_SUCCESS, "SetLinearSolver with dense J should succeed");
 
   /* --- Tolerance setters --- */

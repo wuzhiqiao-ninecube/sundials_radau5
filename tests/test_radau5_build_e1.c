@@ -48,7 +48,7 @@ int main(void)
   Radau5Init(mem, dummy_rhs, 0.0, y0);
 
   SUNMatrix Jtemplate = SUNDenseMatrix(n, n, sunctx);
-  Radau5SetLinearSolver(mem, Jtemplate);
+  Radau5SetLinearSolver(mem, Jtemplate, NULL);
 
   Radau5Mem rmem = RADAU5_MEM(mem);
 

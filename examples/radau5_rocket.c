@@ -105,14 +105,20 @@ static int rootfn_phase2(sunrealtype t, N_Vector y, sunrealtype* gout,
   return 0;
 }
 
-int main(void)
+int main(int argc, char* argv[])
 {
+  int nsmin = 3;
+  int nsmax = 7;
+  if (argc > 1) nsmin = atoi(argv[1]);
+  if (argc > 2) nsmax = atoi(argv[2]);
+
   SUNContext sunctx;
   SUNContext_Create(SUN_COMM_NULL, &sunctx);
 
   RocketData rd = { .engine_on = 1 };
 
   void* mem = Radau5Create(sunctx);
+  Radau5SetOrderLimits(mem, nsmin, nsmax);
 
   /* Initial conditions: H=0, v=0 */
   N_Vector y = N_VNew_Serial(2, sunctx);
@@ -122,7 +128,7 @@ int main(void)
 
   Radau5Init(mem, rhs, 0.0, y);
   SUNMatrix J = SUNDenseMatrix(2, 2, sunctx);
-  Radau5SetLinearSolver(mem, J);
+  Radau5SetLinearSolver(mem, J, NULL);
   Radau5SetJacFn(mem, jac);
   Radau5SetUserData(mem, &rd);
   Radau5SStolerances(mem, 1.0e-5, 1.0e-2);
@@ -169,7 +175,7 @@ int main(void)
         /* Reinitialize with new root function (1 component: v=0) */
         N_VScale(1.0, yout, y);
         Radau5Init(mem, rhs, t, y);
-        Radau5SetLinearSolver(mem, J);
+        Radau5SetLinearSolver(mem, J, NULL);
         Radau5SetJacFn(mem, jac);
         Radau5SetUserData(mem, &rd);
         Radau5SStolerances(mem, 1.0e-5, 1.0e-2);

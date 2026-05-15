@@ -94,12 +94,18 @@ static int rootfn(sunrealtype t, N_Vector y, sunrealtype* gout, void* user_data)
   return 0;
 }
 
-int main(void)
+int main(int argc, char* argv[])
 {
+  int nsmin = 3;
+  int nsmax = 7;
+  if (argc > 1) nsmin = atoi(argv[1]);
+  if (argc > 2) nsmax = atoi(argv[2]);
+
   SUNContext sunctx;
   SUNContext_Create(SUN_COMM_NULL, &sunctx);
 
   void* mem = Radau5Create(sunctx);
+  Radau5SetOrderLimits(mem, nsmin, nsmax);
 
   /* Initial conditions */
   N_Vector y = N_VNew_Serial(NEQ, sunctx);
@@ -113,7 +119,7 @@ int main(void)
 
   /* Linear solver (dense 4x4, DQ Jacobian) */
   SUNMatrix J = SUNDenseMatrix(NEQ, NEQ, sunctx);
-  Radau5SetLinearSolver(mem, J);
+  Radau5SetLinearSolver(mem, J, NULL);
 
   /* Tolerances (matching MATLAB orbitode) */
   Radau5SStolerances(mem, 1.0e-5, 1.0e-4);

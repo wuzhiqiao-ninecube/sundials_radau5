@@ -122,6 +122,22 @@ typedef struct Radau5Mem_
   int nit;    /* max Newton iterations (default 7) */
   int startn; /* 0=extrapolate, 1=zero starting values */
 
+  /* Variable-order selection */
+  int nsmin, nsmax;        /* order bounds (default both 3) */
+  int variab;              /* 1 if variable order enabled (nsmin < nsmax) */
+  int ichan;               /* steps since last order change */
+  sunrealtype thetat;      /* smoothed Newton contraction rate */
+  int nsnew;               /* proposed new ns */
+  int change;              /* 1 if order change pending this step */
+  int unexp;               /* 1 if unexpected step rejection occurred */
+  int unexn;               /* 1 if Newton predicted hhfac <= 0.5 */
+  int ikeep;               /* 1 if skipdecomp path wants to retry with higher order */
+  int newt_prev;           /* Newton iteration count from previous accepted step */
+  sunrealtype vitu;        /* theta threshold to increase order (default 0.002) */
+  sunrealtype vitd;        /* theta threshold to decrease order (default 0.8) */
+  sunrealtype hhou;        /* step ratio upper bound for order increase (default 1.2) */
+  sunrealtype hhod;        /* step ratio lower bound for order increase (default 0.8) */
+
   /* Counters */
   long int nstep, naccpt, nrejct;
   long int nfcn, njac, ndec, nsol, nnewt;
@@ -138,7 +154,6 @@ typedef struct Radau5Mem_
   int setup_done;      /* Radau5Init completed */
   int ls_done;         /* Radau5SetLinearSolver completed */
   int mass_evaluated;  /* 1 if mass matrix has been evaluated */
-  int sparse_ls_finalized; /* 1 if E1/E2 rebuilt with union(J,M) pattern */
   long int mxstep;     /* max steps (default 100000) */
 
   /* Continuous output state */
@@ -186,6 +201,7 @@ typedef struct Radau5Mem_
 
 /* radau5_linsys.c */
 int radau5_InitConstants(Radau5Mem rmem);
+int radau5_ChangeOrder(Radau5Mem rmem, int nsnew);
 int radau5_DQJacDense(Radau5Mem rmem, sunrealtype t, N_Vector y, N_Vector fy);
 int radau5_DQJacBand(Radau5Mem rmem, sunrealtype t, N_Vector y, N_Vector fy);
 int radau5_DQJacSparse(Radau5Mem rmem, sunrealtype t, N_Vector y, N_Vector fy);

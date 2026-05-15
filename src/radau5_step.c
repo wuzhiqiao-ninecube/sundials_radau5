@@ -21,31 +21,10 @@ int radau5_Step(Radau5Mem rmem)
   sunrealtype  uround = SUN_UNIT_ROUNDOFF;
   int ns = rmem->ns;
 
-  /* Collocation node offsets */
-  sunrealtype c1   = rmem->c[0];
-  sunrealtype c2   = rmem->c[1];
-  sunrealtype c1m1 = (rmem->c[0] - SUN_RCONST(1.0));
-  sunrealtype c2m1 = (rmem->c[1] - SUN_RCONST(1.0));
-  (void)c1m1; /* used only in extrapolation via cont arrays */
-  (void)c2m1;
-
   /* Eigenvalue parameters */
   sunrealtype u1   = rmem->u1;
   sunrealtype alph = rmem->alph[0];
   sunrealtype beta = rmem->beta_eig[0];
-
-  sunrealtype TI11,TI12,TI13, TI21,TI22,TI23, TI31,TI32,TI33; /* set below based on use_schur */
-
-  /* TI matrix rows (for F1/F2/F3 from Z extrapolation) */
-  if (rmem->use_schur) {
-    TI11 = rmem->US_mat[0], TI12 = rmem->US_mat[3], TI13 = rmem->US_mat[6];
-    TI21 = rmem->US_mat[1], TI22 = rmem->US_mat[4], TI23 = rmem->US_mat[7];
-    TI31 = rmem->US_mat[2], TI32 = rmem->US_mat[5], TI33 = rmem->US_mat[8];
-  }else {
-    TI11 = rmem->TI_mat[0], TI12 = rmem->TI_mat[1], TI13 = rmem->TI_mat[2];
-    TI21 = rmem->TI_mat[3], TI22 = rmem->TI_mat[4], TI23 = rmem->TI_mat[5];
-    TI31 = rmem->TI_mat[6], TI32 = rmem->TI_mat[7], TI33 = rmem->TI_mat[8];
-  }
 
   /* Step-size control parameters */
   sunrealtype safe  = rmem->safe;
@@ -59,12 +38,10 @@ int radau5_Step(Radau5Mem rmem)
   sunrealtype cfac  = safe * (SUN_RCONST(1.0) + SUN_RCONST(2.0) * rmem->nit);
 
   /* Raw data pointers — set inside loops */
-  sunrealtype *z1d, *z2d, *z3d;
-  sunrealtype *f1d, *f2d, *f3d;
   sunrealtype *scald, *ycurd;
 
   int ret;
-  int newt;
+  int newt = 0;
   sunrealtype err;
   sunrealtype fac1, alphn, betan;
   sunrealtype fac, quot, hnew, qt;
@@ -81,6 +58,16 @@ int radau5_Step(Radau5Mem rmem)
   if (rmem->skipdecomp)
   {
     rmem->skipdecomp = 0;
+
+    /* Variable-order: ikeep path — if enough steps passed, try order increase */
+    if (rmem->variab && rmem->ikeep)
+    {
+      rmem->ichan++;
+      rmem->ikeep = 0;
+      if (rmem->ichan >= 10 && rmem->ns < rmem->nsmax)
+        goto label20;  /* retry with potential order increase */
+    }
+
     /* Recompute fac1, alphn, betan for the (unchanged) h */
     fac1  = u1   / rmem->h;
     alphn = alph / rmem->h;
@@ -121,9 +108,53 @@ label10:
   rmem->caljac = 1;
 
   /* =========================================================================
-   * label20: Build and factor E1, E2
+   * Variable-order selection (Fortran radau.f lines 900-935)
+   * Placed before label20 so that the new ns is used for E1/E2 build.
    * =======================================================================*/
 label20:
+  if (rmem->variab)
+  {
+    rmem->ichan++;
+    sunrealtype hquot = rmem->h / rmem->hold;
+    rmem->thetat = SUNMIN(SUN_RCONST(10.0),
+                          SUNMAX(rmem->theta, rmem->thetat * SUN_RCONST(0.5)));
+    rmem->nsnew = rmem->ns;
+
+    /* Consider increasing order */
+    if (rmem->newt_prev > 1 && rmem->thetat <= rmem->vitu
+        && hquot < rmem->hhou && hquot > rmem->hhod)
+      rmem->nsnew = SUNMIN(rmem->nsmax, rmem->ns + 2);
+
+    /* Consider decreasing order */
+    if (rmem->thetat >= rmem->vitd || rmem->unexp)
+      rmem->nsnew = SUNMAX(rmem->nsmin, rmem->ns - 2);
+    if (rmem->ichan >= 1 && rmem->unexn)
+      rmem->nsnew = SUNMAX(rmem->nsmin, rmem->ns - 2);
+
+    /* Don't increase too soon after a change */
+    if (rmem->ichan <= 10)
+      rmem->nsnew = SUNMIN(rmem->ns, rmem->nsnew);
+
+    rmem->change = (rmem->ns != rmem->nsnew) ? 1 : 0;
+    rmem->unexn = 0;
+    rmem->unexp = 0;
+
+    if (rmem->change)
+    {
+      ret = radau5_ChangeOrder(rmem, rmem->nsnew);
+      if (ret != RADAU5_SUCCESS) return ret;
+      rmem->ichan = 1;
+      /* Update local variables that depend on ns */
+      ns = rmem->ns;
+      u1 = rmem->u1;
+      alph = rmem->alph[0];
+      beta = rmem->beta_eig[0];
+    }
+  }
+
+  /* =========================================================================
+   * Build and factor E1, E2
+   * =======================================================================*/
   fac1  = u1   / rmem->h;
   alphn = alph / rmem->h;
   betan = beta / rmem->h;
@@ -172,53 +203,86 @@ label30:
   }
 
   /* Newton starting values */
-  z1d = N_VGetArrayPointer(rmem->z[0]);
-  z2d = N_VGetArrayPointer(rmem->z[1]);
-  z3d = N_VGetArrayPointer(rmem->z[2]);
-  f1d = N_VGetArrayPointer(rmem->f[0]);
-  f2d = N_VGetArrayPointer(rmem->f[1]);
-  f3d = N_VGetArrayPointer(rmem->f[2]);
-
-  if (rmem->first || rmem->startn)
+  if (rmem->first || rmem->startn || rmem->change)
   {
-    for (sunindextype i = 0; i < n; i++)
+    for (int k = 0; k < ns; k++)
     {
-      z1d[i] = SUN_RCONST(0.0);
-      z2d[i] = SUN_RCONST(0.0);
-      z3d[i] = SUN_RCONST(0.0);
-      f1d[i] = SUN_RCONST(0.0);
-      f2d[i] = SUN_RCONST(0.0);
-      f3d[i] = SUN_RCONST(0.0);
+      sunrealtype* zd = N_VGetArrayPointer(rmem->z[k]);
+      sunrealtype* fd = N_VGetArrayPointer(rmem->f[k]);
+      for (sunindextype i = 0; i < n; i++)
+      {
+        zd[i] = SUN_RCONST(0.0);
+        fd[i] = SUN_RCONST(0.0);
+      }
     }
   }
   else
   {
-    /* Extrapolate from previous step using continuous output coefficients */
-    sunrealtype *ak1d = N_VGetArrayPointer(rmem->cont[1]);
-    sunrealtype *ak2d = N_VGetArrayPointer(rmem->cont[2]);
-    sunrealtype *ak3d = N_VGetArrayPointer(rmem->cont[3]);
+    /* Extrapolate from previous step using continuous output coefficients.
+     *
+     * General algorithm from Fortran radau.f (ns=5/7 blocks):
+     *   HQUOT = H/HOLD
+     *   DO K=1,NS
+     *     CCQ = C(K)*HQUOT
+     *     DO I=1,N
+     *       VAL = CONT(I+NS*N)
+     *       DO L=NS-1,1,-1
+     *         VAL = CONT(I+L*N) + (CCQ - C(NS-L) + 1) * VAL
+     *       END DO
+     *       ZZ(I+(K-1)*N) = CCQ * VAL
+     *     END DO
+     *   END DO
+     *
+     * Node mapping: Fortran C(NS-L) → c[ns-l-1] for l=1..ns-1.
+     * The "+1" comes from the shift s = (t-xsol)/hsol + 1 in CONTRA;
+     * here CCQ = c[k]*hquot plays the role of s for the new collocation point.
+     */
+    sunrealtype hquot = rmem->h / rmem->hold;
 
-    sunrealtype c3q = rmem->h / rmem->hold;
-    sunrealtype c1q = c1 * c3q;
-    sunrealtype c2q = c2 * c3q;
+    /* Cache cont pointers outside inner loops */
+    sunrealtype* contd[RADAU5_NS_MAX + 1];
+    for (int l = 0; l <= ns; l++)
+      contd[l] = N_VGetArrayPointer(rmem->cont[l]);
+
+    for (int k = 0; k < ns; k++)
+    {
+      sunrealtype ccq = rmem->c[k] * hquot;
+      sunrealtype* zd = N_VGetArrayPointer(rmem->z[k]);
+
+      for (sunindextype i = 0; i < n; i++)
+      {
+        sunrealtype val = contd[ns][i];
+        for (int l = ns - 1; l >= 1; l--)
+          val = contd[l][i] + (ccq - rmem->c[ns - l - 1] + SUN_RCONST(1.0)) * val;
+        zd[i] = ccq * val;
+      }
+    }
+
+    /* Compute f = TI * z (forward transform for Newton starting values) */
+    sunrealtype *zd_arr[RADAU5_NS_MAX], *fd_arr[RADAU5_NS_MAX];
+    for (int k = 0; k < ns; k++) {
+      zd_arr[k] = N_VGetArrayPointer(rmem->z[k]);
+      fd_arr[k] = N_VGetArrayPointer(rmem->f[k]);
+    }
 
     for (sunindextype i = 0; i < n; i++)
     {
-      sunrealtype ak1 = ak1d[i];
-      sunrealtype ak2 = ak2d[i];
-      sunrealtype ak3 = ak3d[i];
+      sunrealtype zvals[RADAU5_NS_MAX];
+      for (int k = 0; k < ns; k++)
+        zvals[k] = zd_arr[k][i];
 
-      sunrealtype z1i = c1q * (ak1 + (c1q - c2m1) * (ak2 + (c1q - c1m1) * ak3));
-      sunrealtype z2i = c2q * (ak1 + (c2q - c2m1) * (ak2 + (c2q - c1m1) * ak3));
-      sunrealtype z3i = c3q * (ak1 + (c3q - c2m1) * (ak2 + (c3q - c1m1) * ak3));
-
-      z1d[i] = z1i;
-      z2d[i] = z2i;
-      z3d[i] = z3i;
-
-      f1d[i] = TI11 * z1i + TI12 * z2i + TI13 * z3i;
-      f2d[i] = TI21 * z1i + TI22 * z2i + TI23 * z3i;
-      f3d[i] = TI31 * z1i + TI32 * z2i + TI33 * z3i;
+      for (int k = 0; k < ns; k++)
+      {
+        sunrealtype sum = SUN_RCONST(0.0);
+        if (rmem->use_schur) {
+          for (int j = 0; j < ns; j++)
+            sum += rmem->US_mat[j * ns + k] * zvals[j];
+        } else {
+          for (int j = 0; j < ns; j++)
+            sum += rmem->TI_mat[k * ns + j] * zvals[j];
+        }
+        fd_arr[k][i] = sum;
+      }
     }
   }
 
@@ -252,11 +316,14 @@ label30:
   if (err < SUN_RCONST(1.0))
   {
     /* --- Step accepted --- */
+    int order_changed = rmem->change;
     rmem->first  = 0;
+    rmem->change = 0;
+    rmem->newt_prev = newt;
     rmem->naccpt++;
 
-    /* Gustafsson predictive controller (pred == 1) */
-    if (rmem->pred == 1 && rmem->naccpt > 1)
+    /* Gustafsson predictive controller (pred == 1, skip if order just changed) */
+    if (rmem->pred == 1 && rmem->naccpt > 1 && !order_changed)
     {
       facgus = (rmem->hacc / rmem->h)
              * SUNRpowerR(err * err / rmem->erracc, SUN_RCONST(1.0) / (sunrealtype)(ns + 1))
@@ -274,9 +341,9 @@ label30:
     rmem->tn  += rmem->h;
 
     ycurd = N_VGetArrayPointer(rmem->ycur);
-    z3d   = N_VGetArrayPointer(rmem->z[ns-1]);
+    sunrealtype* zlast = N_VGetArrayPointer(rmem->z[ns-1]);
     for (sunindextype i = 0; i < n; i++)
-      ycurd[i] += z3d[i];
+      ycurd[i] += zlast[i];
 
     /* Update continuous output coefficients */
     radau5_UpdateContinuousOutput(rmem);
@@ -317,6 +384,7 @@ label30:
       /* Reuse both Jacobian and factorization (Fortran "goto 30").
        * Set h=hnew — the factorization is slightly stale but qt ∈ [1,6]
        * means hnew ≈ h, so the mismatch is small. */
+      rmem->ikeep = 1;  /* mark for variable-order ikeep logic */
       rmem->h = hnew;
       rmem->caljac = 0;
       rmem->skipdecomp = 1;
@@ -389,6 +457,7 @@ label78:
   }
   /* CONV_FAILURE / NEWT_PREDICT: do NOT increment nsing */
 
+  rmem->unexp = 1;  /* mark unexpected rejection for order selection */
   rmem->h    *= SUN_RCONST(0.5);
   rmem->hhfac = SUN_RCONST(0.5);
   rmem->reject = 1;

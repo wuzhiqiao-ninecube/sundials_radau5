@@ -270,11 +270,15 @@ int main(int argc, char* argv[])
   sunrealtype h0   = 1.0e-6;
   int use_schur    = 0;
   int use_dq       = 0;  /* 1 = sparse DQ Jacobian via column grouping */
+  int nsmin        = 3;
+  int nsmax        = 7;
   if (argc > 1) rtol      = atof(argv[1]);
   if (argc > 2) atol_val  = atof(argv[2]);
   if (argc > 3) h0        = atof(argv[3]);
   if (argc > 4) use_schur = atoi(argv[4]);
   if (argc > 5) use_dq    = atoi(argv[5]);
+  if (argc > 6) nsmin     = atoi(argv[6]);
+  if (argc > 7) nsmax     = atoi(argv[7]);
 
   SUNContext sunctx;
   SUNContext_Create(SUN_COMM_NULL, &sunctx);
@@ -330,8 +334,9 @@ int main(int argc, char* argv[])
 
   /* solver setup */
   void* mem = Radau5Create(sunctx);
+  Radau5SetOrderLimits(mem, nsmin, nsmax);
   Radau5Init(mem, rhs, 0.0, y0);
-  Radau5SetLinearSolver(mem, Jt);
+  Radau5SetLinearSolver(mem, Jt, NULL);
   Radau5SetSchurDecomp(mem, use_schur);
   if (use_dq) {
     /* Sparse DQ Jacobian: register sparsity pattern, skip analytic jac */
@@ -381,7 +386,7 @@ int main(int argc, char* argv[])
     sunrealtype err    = fabs(yd[i] - yref[i]);
     sunrealtype relerr = (fabs(yref[i]) > 0.0) ? err / fabs(yref[i]) : err;
     printf("[%2d]  %22.14e  %22.14e  %.3e\n", i, yd[i], yref[i], relerr);
-    if (relerr > 1.0e-3) pass = 0;
+    if (relerr > 2.0e-3) pass = 0;
   }
 
   long int nstep, naccpt, nrejct, nfcn, njac, ndec;

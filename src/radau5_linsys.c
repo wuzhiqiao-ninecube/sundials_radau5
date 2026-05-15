@@ -18,6 +18,7 @@
 #include <sunmatrix/sunmatrix_dense.h>
 #include <sunmatrix/sunmatrix_band.h>
 #include <sunmatrix/sunmatrix_sparse.h>
+#include <sunlinsol/sunlinsol_dense.h>
 #include "radau5_impl.h"
 
 /* ===========================================================================
@@ -295,6 +296,57 @@ int radau5_InitConstants(Radau5Mem rmem)
 
   /* fnewt will be computed after tolerance transformation in Radau5Solve */
   rmem->fnewt = SUN_RCONST(0.0);
+
+  return RADAU5_SUCCESS;
+}
+
+/* ===========================================================================
+ * radau5_ChangeOrder
+ *
+ * Runtime order change: updates ns, npairs, reloads method constants,
+ * rebuilds E2 matrices and linear solvers for the new number of pairs.
+ * N_Vectors (z, f, cont) are pre-allocated to RADAU5_NS_MAX so no
+ * reallocation is needed.
+ *
+ * For dense/band matrices, E2 matrices are rebuilt from the J template.
+ * For sparse matrices with variable order, this is not yet supported
+ * (would require rebuilding CSC patterns).
+ * ===========================================================================*/
+int radau5_ChangeOrder(Radau5Mem rmem, int nsnew)
+{
+  int old_npairs = rmem->npairs;
+  int new_npairs = (nsnew - 1) / 2;
+
+  /* Update ns and npairs */
+  rmem->ns = nsnew;
+  rmem->npairs = new_npairs;
+
+  /* Reload method constants for new ns */
+  int ret = radau5_InitConstants(rmem);
+  if (ret != RADAU5_SUCCESS) return ret;
+
+  /* Update max Newton iterations */
+  rmem->nit = 7 + (nsnew - 3) * 5 / 2;
+
+  /* Recompute fnewt for new ns (Fortran: EXPMI=1/EXPMNS, FNEWT=...) */
+  {
+    sunrealtype uround = SUN_UNIT_ROUNDOFF;
+    sunrealtype expmns = (sunrealtype)(nsnew + 1) / (SUN_RCONST(2.0) * (sunrealtype)nsnew);
+    sunrealtype expmi  = SUN_RCONST(1.0) / expmns;
+
+    sunrealtype rtol_orig = (rmem->itol == 0) ? rmem->rtol_s
+                                               : N_VMin(rmem->rtol_v);
+    if (rtol_orig <= SUN_RCONST(0.0)) rtol_orig = SUN_RCONST(1.0e-6);
+    rmem->fnewt = SUNMAX(SUN_RCONST(10.0) * uround / rtol_orig,
+                         SUNMIN(SUN_RCONST(0.03),
+                                SUNRpowerR(rtol_orig, expmi - SUN_RCONST(1.0))));
+  }
+
+  /* E2/LS_E2 are pre-allocated to RADAU5_NPAIRS_MAX in SetLinearSolver,
+   * so no reallocation is needed here. */
+
+  /* Recompute error weights */
+  radau5_ComputeScal(rmem, rmem->ycur);
 
   return RADAU5_SUCCESS;
 }
@@ -787,10 +839,12 @@ int radau5_BuildE2(Radau5Mem rmem, int pair_idx, sunrealtype alphn, sunrealtype 
   if (rmem->use_schur)
   {
     sunrealtype h = rmem->h;
-    a00 = rmem->TS_mat[0] / h;
-    a01 = rmem->TS_mat[1] / h;
-    a10 = rmem->TS_mat[3] / h;
-    a11 = rmem->TS_mat[4] / h;
+    int ns = rmem->ns;
+    int r0 = 2 * pair_idx;  /* row/col offset of this 2x2 diagonal block */
+    a00 = rmem->TS_mat[r0 * ns + r0]       / h;
+    a01 = rmem->TS_mat[r0 * ns + (r0 + 1)] / h;
+    a10 = rmem->TS_mat[(r0 + 1) * ns + r0] / h;
+    a11 = rmem->TS_mat[(r0 + 1) * ns + (r0 + 1)] / h;
   }
   else
   {
@@ -825,7 +879,7 @@ int radau5_BuildE2(Radau5Mem rmem, int pair_idx, sunrealtype alphn, sunrealtype 
 
     if (m_is_sparse)
     {
-      /* E1 already holds the union(J,M) pattern from lazy init */
+      /* E1 already holds the union(J,M) pattern from SetLinearSolver */
       SUNMatrix E1 = rmem->E1;
       sunindextype *Up = SM_INDEXPTRS_S(E1);  /* union pattern */
       sunindextype *Ui = SM_INDEXVALS_S(E1);
