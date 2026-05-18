@@ -428,6 +428,7 @@ int Radau5Solve(void* radau5_mem, sunrealtype tout, N_Vector yout,
     }
     else
     {
+      /* NVEC_DIRECT_ACCESS: In-place modification of tolerance vector elements */
       sunrealtype *rv = N_VGetArrayPointer(rmem->rtol_v);
       sunrealtype *av = N_VGetArrayPointer(rmem->atol_v);
       for (sunindextype i = 0; i < rmem->n; i++)
@@ -633,6 +634,7 @@ sunrealtype Radau5Contr(void* radau5_mem, sunindextype i, sunrealtype t)
   sunrealtype s = (t - rmem->xsol) / rmem->hsol + SUN_RCONST(1.0);
 
   /* Cache cont pointers to avoid repeated N_VGetArrayPointer calls */
+  /* NVEC_DIRECT_ACCESS: Newton divided-difference algorithm (nested, data-dependent recurrence) */
   sunrealtype* contd[RADAU5_NS_MAX + 1];
   for (int k = 0; k <= ns; k++)
     contd[k] = N_VGetArrayPointer(rmem->cont[k]);

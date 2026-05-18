@@ -14,7 +14,6 @@
 #include <math.h>
 #include <stdlib.h>
 #include <sundials/sundials_math.h>
-#include <nvector/nvector_serial.h>
 #include "radau5_impl.h"
 
 int radau5_Newton(Radau5Mem rmem, int* newt_out)
@@ -83,6 +82,7 @@ int radau5_Newton(Radau5Mem rmem, int* newt_out)
      * ----------------------------------------------------------------*/
     {
       sunrealtype a_vals[RADAU5_NS_MAX];
+      /* NVEC_DIRECT_ACCESS: ns×ns dense matrix applied per-component across stage vectors */
       sunrealtype *zd[RADAU5_NS_MAX];
       for (int k = 0; k < ns; k++)
         zd[k] = N_VGetArrayPointer(rmem->z[k]);
@@ -113,6 +113,8 @@ int radau5_Newton(Radau5Mem rmem, int* newt_out)
      * ----------------------------------------------------------------*/
     sunrealtype fac1 = rmem->u1 / h;
 
+    /* NVEC_DIRECT_ACCESS: Stage vector element access for RHS formation and linear solve
+     * pack/unpack. The fd/zd pointers are used throughout steps 3-6 below. */
     sunrealtype *fd[RADAU5_NS_MAX], *zd[RADAU5_NS_MAX];
     for (int k = 0; k < ns; k++)
     {
@@ -134,6 +136,7 @@ int radau5_Newton(Radau5Mem rmem, int* newt_out)
         {
           mf_ptrs[j] = mf_alloc + j * n;
           radau5_MassMult(rmem, rmem->f[j], tmp1);
+          /* NVEC_DIRECT_ACCESS: TS quasi-triangular matrix row scalings with mass-mult intermediates */
           sunrealtype *td = N_VGetArrayPointer(tmp1);
           for (sunindextype ii = 0; ii < n; ii++)
             mf_ptrs[j][ii] = td[ii];
@@ -177,6 +180,7 @@ int radau5_Newton(Radau5Mem rmem, int* newt_out)
         if (rmem->M != NULL)
         {
           radau5_MassMult(rmem, rmem->z[ns-1], tmp1);
+          /* NVEC_DIRECT_ACCESS: Block triangular solve coupling between stage pairs */
           df_last = N_VGetArrayPointer(tmp1);
         }
         else
@@ -196,6 +200,7 @@ int radau5_Newton(Radau5Mem rmem, int* newt_out)
       {
         int r0 = 2 * pk, r1 = r0 + 1;
 
+        /* NVEC_DIRECT_ACCESS: Interleaving n-vectors into 2n-vector for block linear solve */
         sunrealtype *rhs2d = N_VGetArrayPointer(rmem->rhs2[pk]);
         for (sunindextype ii = 0; ii < n; ii++)
         {
@@ -227,6 +232,7 @@ int radau5_Newton(Radau5Mem rmem, int* newt_out)
             if (rmem->M != NULL)
             {
               radau5_MassMult(rmem, rmem->z[sc], tmp1);
+              /* NVEC_DIRECT_ACCESS: Block triangular solve coupling between stage pairs */
               df_col = N_VGetArrayPointer(tmp1);
             }
             else
@@ -321,6 +327,7 @@ int radau5_Newton(Radau5Mem rmem, int* newt_out)
       for (int pk = 0; pk < npairs; pk++)
       {
         int r0 = 2 * pk + 1, r1 = r0 + 1;
+        /* NVEC_DIRECT_ACCESS: Interleaving n-vectors into 2n-vector for block linear solve */
         sunrealtype *rhs2d = N_VGetArrayPointer(rmem->rhs2[pk]);
         for (sunindextype ii = 0; ii < n; ii++)
         {
@@ -351,18 +358,13 @@ int radau5_Newton(Radau5Mem rmem, int* newt_out)
      * 4. Convergence norm (RMS over all ns*n components, scaled)
      * ----------------------------------------------------------------*/
     {
-      sunrealtype *scal_data = N_VGetArrayPointer(scal);
-      dyno = SUN_RCONST(0.0);
-      for (sunindextype i = 0; i < n; i++)
+      sunrealtype dyno_sq = SUN_RCONST(0.0);
+      for (int k = 0; k < ns; k++)
       {
-        sunrealtype denom = scal_data[i];
-        for (int k = 0; k < ns; k++)
-        {
-          sunrealtype val = zd[k][i] / denom;
-          dyno += val * val;
-        }
+        N_VDiv(rmem->z[k], scal, tmp1);
+        dyno_sq += N_VDotProd(tmp1, tmp1);
       }
-      dyno = SUNRsqrt(dyno / ((sunrealtype)ns * (sunrealtype)n));
+      dyno = SUNRsqrt(dyno_sq / ((sunrealtype)ns * (sunrealtype)n));
     }
 
     /* ------------------------------------------------------------------

@@ -233,6 +233,22 @@ Unit tests: `test_radau5_constants`, `test_radau5_api`, `test_radau5_build_e1`, 
 - `ndec` counter increments once per `SUNLinSolSetup` call (E1 and E2 counted separately, so C ndec ≈ 2× Fortran ndec).
 - `nfcn` counts all RHS evaluations including those inside Newton (ns per iteration) and error estimate refinement.
 
+### N_Vector Usage Policy
+
+The solver uses generic N_Vector interface functions (N_VAbs, N_VScale, N_VAddConst, N_VProd, N_VLinearSum, N_VLinearCombination, N_VDiv, N_VDotProd, N_VConst) for all operations that have a natural vector-level expression. This keeps the solver compatible with any N_Vector implementation (serial, parallel, GPU, etc.).
+
+Remaining `N_VGetArrayPointer` calls are marked with `/* NVEC_DIRECT_ACCESS: <reason> */` comments and are limited to operations that inherently require per-element access:
+- **Stage transforms (TI/T)**: ns×ns dense matrix applied per-component across stage vectors
+- **E2 RHS pack/unpack**: Interleaving n-vectors into 2n-vectors for block linear solves
+- **Schur/eigenvalue RHS formation**: TS/complex-pair operations coupling multiple stage vectors
+- **Continuous output**: Newton divided-difference recurrence (nested, data-dependent)
+- **Step extrapolation**: Horner polynomial evaluation per-component
+- **DAE index scaling**: Partial-range operations on index-2/3 components only
+- **DQ Jacobian**: Column perturbation with element-wise increments
+- **IC computation**: Conditional per-element based on algebraic/differential ID vector
+
+When adding new code, prefer generic N_Vector ops. Use `N_VGetArrayPointer` only when the operation cannot be expressed with the generic interface, and mark it with the `NVEC_DIRECT_ACCESS` comment.
+
 ## Documentation
 
 Detailed documentation in `doc/`:

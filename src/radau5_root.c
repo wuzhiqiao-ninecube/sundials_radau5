@@ -39,6 +39,7 @@ static int radau5_root_EvalG(Radau5Mem rmem, sunrealtype t, N_Vector y,
  * ---------------------------------------------------------------------------*/
 static void radau5_root_InterpY(Radau5Mem rmem, sunrealtype t)
 {
+  /* NVEC_DIRECT_ACCESS: Radau5Contr returns one scalar per component; no vector-level API */
   sunrealtype* yd = N_VGetArrayPointer(rmem->y_root);
   for (sunindextype i = 0; i < rmem->n; i++)
     yd[i] = Radau5Contr((void*)rmem, i, t);

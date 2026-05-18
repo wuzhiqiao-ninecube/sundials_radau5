@@ -448,6 +448,7 @@ int radau5_DQJacDense(Radau5Mem rmem, sunrealtype t, N_Vector y, N_Vector fy)
   J         = rmem->J;
   srur      = SUNRsqrt(SUN_UNIT_ROUNDOFF);
 
+  /* NVEC_DIRECT_ACCESS: Column perturbation with element-wise increment for finite differences */
   fy_data   = N_VGetArrayPointer(fy);
 
   for (j = 0; j < n; j++)
@@ -467,6 +468,7 @@ int radau5_DQJacDense(Radau5Mem rmem, sunrealtype t, N_Vector y, N_Vector fy)
     y_data[j] = ysave;
 
     inc_inv   = SUN_RCONST(1.0) / inc;
+    /* NVEC_DIRECT_ACCESS: Column perturbation with element-wise increment for finite differences */
     tmp1_data = N_VGetArrayPointer(rmem->tmp1);
 
     for (i = 0; i < n; i++)
@@ -508,6 +510,7 @@ int radau5_DQJacBand(Radau5Mem rmem, sunrealtype t, N_Vector y, N_Vector fy)
               * (sunrealtype)n * fnorm)
            : SUN_RCONST(1.0);
 
+  /* NVEC_DIRECT_ACCESS: Column perturbation with element-wise increment for finite differences */
   y_data    = N_VGetArrayPointer(y);
   fy_data   = N_VGetArrayPointer(fy);
   scal_data = N_VGetArrayPointer(rmem->scal);
@@ -598,6 +601,7 @@ int radau5_DQJacSparse(Radau5Mem rmem, sunrealtype t, N_Vector y, N_Vector fy)
               * (sunrealtype)n * fnorm)
            : SUN_RCONST(1.0);
 
+  /* NVEC_DIRECT_ACCESS: Column perturbation with element-wise increment for finite differences */
   y_data    = N_VGetArrayPointer(y);
   fy_data   = N_VGetArrayPointer(fy);
   scal_data = N_VGetArrayPointer(rmem->scal);
@@ -1098,81 +1102,39 @@ int radau5_DecompE2(Radau5Mem rmem, int pair_idx)
  * ---------------------------------------------------------------------------*/
 void radau5_ComputeScal(Radau5Mem rmem, N_Vector y)
 {
-  sunindextype  i, n;
-  sunrealtype  *y_data, *scal_data;
-  sunrealtype  *rtol_v_data, *atol_v_data;
-
-  n         = rmem->n;
-  y_data    = N_VGetArrayPointer(y);
-  scal_data = N_VGetArrayPointer(rmem->scal);
-
   if (rmem->itol == 0)
   {
-    /* Scalar tolerances */
-    for (i = 0; i < n; i++)
-      scal_data[i] = rmem->atol_s + rmem->rtol_s * fabs(y_data[i]);
+    /* Scalar tolerances: scal = atol_s + rtol_s * |y| */
+    N_VAbs(y, rmem->scal);
+    N_VScale(rmem->rtol_s, rmem->scal, rmem->scal);
+    N_VAddConst(rmem->scal, rmem->atol_s, rmem->scal);
   }
   else
   {
-    /* Vector tolerances */
-    rtol_v_data = N_VGetArrayPointer(rmem->rtol_v);
-    atol_v_data = N_VGetArrayPointer(rmem->atol_v);
-    for (i = 0; i < n; i++)
-      scal_data[i] = atol_v_data[i] + rtol_v_data[i] * fabs(y_data[i]);
+    /* Vector tolerances: scal = atol_v + rtol_v .* |y| */
+    N_VAbs(y, rmem->scal);
+    N_VProd(rmem->rtol_v, rmem->scal, rmem->scal);
+    N_VLinearSum(SUN_RCONST(1.0), rmem->scal, SUN_RCONST(1.0), rmem->atol_v, rmem->scal);
   }
 }
 
 /* ---------------------------------------------------------------------------
  * radau5_MassMult
  *
- * Compute result = M * x, dispatching on M's matrix type (dense or band).
+ * Compute result = M * x using the generic SUNMatrix matvec interface.
+ * For identity mass (M == NULL), result = x (copy).
  * ---------------------------------------------------------------------------*/
 int radau5_MassMult(Radau5Mem rmem, N_Vector x, N_Vector result)
 {
-  sunindextype i, j, n = rmem->n;
-  SUNMatrix M = rmem->M;
-  sunrealtype *xd = N_VGetArrayPointer(x);
-  sunrealtype *rd = N_VGetArrayPointer(result);
-
-  if (M == NULL)
+  if (rmem->M == NULL)
   {
     /* Identity mass — just copy */
     N_VScale(SUN_RCONST(1.0), x, result);
     return RADAU5_SUCCESS;
   }
 
-  SUNMatrix_ID mid = SUNMatGetID(M);
-
-  if (mid == SUNMATRIX_DENSE)
-  {
-    for (i = 0; i < n; i++)
-    {
-      sunrealtype sum = SUN_RCONST(0.0);
-      for (j = 0; j < n; j++)
-        sum += SM_ELEMENT_D(M, i, j) * xd[j];
-      rd[i] = sum;
-    }
-  }
-  else if (mid == SUNMATRIX_BAND)
-  {
-    sunindextype muM = SM_UBAND_B(M);
-    sunindextype mlM = SM_LBAND_B(M);
-    for (i = 0; i < n; i++)
-    {
-      sunrealtype sum = SUN_RCONST(0.0);
-      sunindextype j1 = SUNMAX(0, i - mlM);
-      sunindextype j2 = SUNMIN(n - 1, i + muM);
-      for (j = j1; j <= j2; j++)
-        sum += SM_ELEMENT_B(M, i, j) * xd[j];
-      rd[i] = sum;
-    }
-  }
-  else
-  {
-    /* Fallback: use SUNMatMatvec if available */
-    SUNErrCode err = SUNMatMatvec(M, x, result);
-    if (err != SUN_SUCCESS) return RADAU5_LSOLVE_FAIL;
-  }
+  SUNErrCode err = SUNMatMatvec(rmem->M, x, result);
+  if (err != SUN_SUCCESS) return RADAU5_LSOLVE_FAIL;
 
   return RADAU5_SUCCESS;
 }

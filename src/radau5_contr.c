@@ -56,6 +56,9 @@ void radau5_UpdateContinuousOutput(Radau5Mem rmem)
    * Fortran CONT(I+NS*N) maps to our cont[ns][i].
    */
 
+  /* NVEC_DIRECT_ACCESS: Newton divided-difference algorithm (nested, data-dependent recurrence).
+   * All N_VGetArrayPointer calls below serve this single algorithm — the divided-difference
+   * recurrence requires per-element access across multiple cont/z vectors simultaneously. */
   sunrealtype* cont_ns = N_VGetArrayPointer(rmem->cont[ns]);
 
   /* Step 1: cont[ns][i] = z[0][i] / c[0]  (Fortran: CONT(I+NS*N) = ZZ(I)/C(1)) */
@@ -108,13 +111,8 @@ void radau5_UpdateContinuousOutput(Radau5Mem rmem)
     }
   }
 
-  /* Step 4: cont[0][i] = ycur[i] (the accepted solution, node s=1=c[ns-1]) */
-  {
-    sunrealtype* cont0 = N_VGetArrayPointer(rmem->cont[0]);
-    sunrealtype* ycurd = N_VGetArrayPointer(rmem->ycur);
-    for (i = 0; i < n; i++)
-      cont0[i] = ycurd[i];
-  }
+  /* Step 4: cont[0] = ycur (the accepted solution, node s=1=c[ns-1]) */
+  N_VScale(SUN_RCONST(1.0), rmem->ycur, rmem->cont[0]);
 
   /* Store the time-window metadata used by Radau5Contr().
    * xold is already set by the step driver (radau5_step.c) before calling

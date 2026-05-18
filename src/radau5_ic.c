@@ -27,6 +27,7 @@ int radau5_CalcIC(Radau5Mem rmem, N_Vector id)
   sunindextype i, n = rmem->n;
   int          iter, retval;
 
+  /* NVEC_DIRECT_ACCESS: Conditional per-element operations based on algebraic/differential ID vector */
   sunrealtype* id_data   = N_VGetArrayPointer(id);
   sunrealtype* ycur      = N_VGetArrayPointer(rmem->ycur);
   sunrealtype* fn_data   = N_VGetArrayPointer(rmem->fn);

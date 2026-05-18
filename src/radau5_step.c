@@ -38,7 +38,7 @@ int radau5_Step(Radau5Mem rmem)
   sunrealtype cfac  = safe * (SUN_RCONST(1.0) + SUN_RCONST(2.0) * rmem->nit);
 
   /* Raw data pointers — set inside loops */
-  sunrealtype *scald, *ycurd;
+  sunrealtype *scald;
 
   int ret;
   int newt = 0;
@@ -190,12 +190,14 @@ label30:
   /* DAE index-2/3 scaling of scal */
   if (rmem->nind2 > 0)
   {
+    /* NVEC_DIRECT_ACCESS: Partial-range scaling of index-2/3 components only */
     scald = N_VGetArrayPointer(rmem->scal);
     for (sunindextype i = rmem->nind1; i < rmem->nind1 + rmem->nind2; i++)
       scald[i] /= rmem->hhfac;
   }
   if (rmem->nind3 > 0)
   {
+    /* NVEC_DIRECT_ACCESS: Partial-range scaling of index-2/3 components only */
     scald = N_VGetArrayPointer(rmem->scal);
     for (sunindextype i = rmem->nind1 + rmem->nind2;
          i < rmem->nind1 + rmem->nind2 + rmem->nind3; i++)
@@ -207,13 +209,8 @@ label30:
   {
     for (int k = 0; k < ns; k++)
     {
-      sunrealtype* zd = N_VGetArrayPointer(rmem->z[k]);
-      sunrealtype* fd = N_VGetArrayPointer(rmem->f[k]);
-      for (sunindextype i = 0; i < n; i++)
-      {
-        zd[i] = SUN_RCONST(0.0);
-        fd[i] = SUN_RCONST(0.0);
-      }
+      N_VConst(SUN_RCONST(0.0), rmem->z[k]);
+      N_VConst(SUN_RCONST(0.0), rmem->f[k]);
     }
   }
   else
@@ -241,6 +238,7 @@ label30:
 
     /* Cache cont pointers outside inner loops */
     sunrealtype* contd[RADAU5_NS_MAX + 1];
+    /* NVEC_DIRECT_ACCESS: Horner polynomial evaluation per-component across stage vectors */
     for (int l = 0; l <= ns; l++)
       contd[l] = N_VGetArrayPointer(rmem->cont[l]);
 
@@ -259,6 +257,7 @@ label30:
     }
 
     /* Compute f = TI * z (forward transform for Newton starting values) */
+    /* NVEC_DIRECT_ACCESS: ns×ns dense matrix applied per-component across stage vectors */
     sunrealtype *zd_arr[RADAU5_NS_MAX], *fd_arr[RADAU5_NS_MAX];
     for (int k = 0; k < ns; k++) {
       zd_arr[k] = N_VGetArrayPointer(rmem->z[k]);
@@ -340,10 +339,8 @@ label30:
     rmem->hold = rmem->h;
     rmem->tn  += rmem->h;
 
-    ycurd = N_VGetArrayPointer(rmem->ycur);
-    sunrealtype* zlast = N_VGetArrayPointer(rmem->z[ns-1]);
-    for (sunindextype i = 0; i < n; i++)
-      ycurd[i] += zlast[i];
+    /* ycur += z[ns-1] */
+    N_VLinearSum(SUN_RCONST(1.0), rmem->ycur, SUN_RCONST(1.0), rmem->z[ns-1], rmem->ycur);
 
     /* Update continuous output coefficients */
     radau5_UpdateContinuousOutput(rmem);
