@@ -206,6 +206,7 @@ Unit tests: `test_radau5_constants`, `test_radau5_api`, `test_radau5_build_e1`, 
 | beam | ODE | 80 | dense (DQ) | 1e-6 / 1e-6 / 1e-6 |
 | fekete | DAE-2 | 160 | dense (DQ) + diag mass | 1e-6 / 1e-6 / 1e-6 |
 | tba | DAE-1 | 350 | dense (DQ) + diag mass | 1e-5 / 1e-5 / 4e-5 |
+| pump | DAE-2 | 9 | dense (analytic Jac) + mass | 1e-7 / 1e-7 / 1e-3 |
 
 #### ARKODE comparison
 
