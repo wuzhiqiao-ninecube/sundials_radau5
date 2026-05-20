@@ -946,3 +946,62 @@ whenever the zero boundary is a stable equilibrium of the ODE.
 ```
 
 The example runs twice (with and without the constraint) and prints a comparison table.
+
+---
+
+## Charge Pump — Smoothed (`radau5_pump_smooth`)
+
+**Source:** `examples/radau5_pump_smooth.c`
+
+**Type:** DAE-2, $n = 9$, dense Jacobian + singular mass matrix
+
+This is a variant of the charge pump example (`radau5_pump`) where the MOSFET charge
+functions $Q_G$, $Q_S$, $Q_D$ have been smoothed to eliminate C0-but-not-C1 transitions
+that cause Newton iteration failures in the original version.
+
+### Smoothing Technique
+
+The original charge functions have two types of non-differentiable points:
+
+1. **`max(ugd - vte, 0)`** — replaced by `softplus(x, ε) = ε·ln(1 + exp(x/ε))`
+2. **Region B/C boundary at `ugs = vte`** — replaced by sigmoid blending:
+   `q = (1-σ)·q_B + σ·q_C` where `σ = 1/(1+exp(-(ugs-vte)/ε))`
+
+The smoothing parameter `ε = 1e-4` (voltage scale ~0.1 mV) is small enough to preserve
+physical accuracy while eliminating Jacobian discontinuities.
+
+### Analytic Jacobian
+
+The Jacobian is computed analytically using chain rule through the softplus/sigmoid
+functions. Key derivative identities:
+- `d/dx softplus(x, ε) = sigmoid(x/ε)` (continuous in [0,1])
+- `d/dx sigmoid(x, ε) = σ(1-σ)/ε`
+
+### Results Comparison
+
+| Version | Outcome | Steps | Accepted | RHS evals |
+|---------|---------|-------|----------|-----------|
+| Original (`pump`) | FAILED (Newton divergence) | 90 | 24 | 596 |
+| Smoothed (`pump_smooth`) | PASSED | 902 | 561 | 5743 |
+
+Reference solution at $t = 1200$ ns:
+- $y_0 = 1.26280042987676 \times 10^{-13}$
+- $y_8 = 1.52255686815578 \times 10^{-4}$
+
+### Usage
+
+```bash
+# Default (variable order, eigen mode)
+./bin/radau5_pump_smooth
+
+# Fixed ns=3, Schur mode
+./bin/radau5_pump_smooth 1e-7 1e-7 1e-3 1 3 3
+
+# Variable order ns=3..13
+./bin/radau5_pump_smooth 1e-7 1e-7 1e-3 0 3 13
+```
+
+### Documentation
+
+- `doc/pumpdae_smooth_doc.md` — detailed explanation of the smoothing methodology
+- `doc/pumpdae_smooth.m` — MATLAB reference implementation
