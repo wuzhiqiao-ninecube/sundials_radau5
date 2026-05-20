@@ -779,15 +779,16 @@ int Radau5SetSchurDecomp(void* radau5_mem, int use_schur)
 }
 
 /* ===========================================================================
- * Radau5SetNumStages — set the number of stages (3, 5, or 7)
+ * Radau5SetNumStages — set the number of stages (3, 5, 7, 9, 11, or 13)
  *
  * Must be called BEFORE Radau5Init. Sets ns and npairs.
- * Default is ns=3 (order 5). ns=5 gives order 9, ns=7 gives order 13.
+ * Default is ns=3 (order 5). ns=5 gives order 9, ns=7 gives order 13,
+ * ns=9 gives order 17, ns=11 gives order 21, ns=13 gives order 25.
  * ===========================================================================*/
 int Radau5SetNumStages(void* radau5_mem, int ns)
 {
   if (!radau5_mem) return RADAU5_MEM_NULL;
-  if (ns != 3 && ns != 5 && ns != 7) return RADAU5_ILL_INPUT;
+  if (ns != 3 && ns != 5 && ns != 7 && ns != 9 && ns != 11 && ns != 13) return RADAU5_ILL_INPUT;
   Radau5Mem rmem = RADAU5_MEM(radau5_mem);
   if (rmem->setup_done) return RADAU5_ILL_INPUT; /* must be called before Init */
   rmem->ns = ns;
@@ -802,7 +803,7 @@ int Radau5SetNumStages(void* radau5_mem, int ns)
  * Radau5SetOrderLimits — enable variable-order mode
  *
  * Sets nsmin and nsmax. Must be called BEFORE Radau5Init.
- * nsmin, nsmax ∈ {3, 5, 7} with nsmin <= nsmax.
+ * nsmin, nsmax ∈ {3, 5, 7, 9, 11, 13} with nsmin <= nsmax.
  * If nsmin < nsmax, variable order is enabled.
  * The initial ns is set to nsmin.
  * ===========================================================================*/
@@ -811,8 +812,8 @@ int Radau5SetOrderLimits(void* radau5_mem, int nsmin, int nsmax)
   if (!radau5_mem) return RADAU5_MEM_NULL;
   Radau5Mem rmem = RADAU5_MEM(radau5_mem);
   if (rmem->setup_done) return RADAU5_ILL_INPUT;
-  if (nsmin != 3 && nsmin != 5 && nsmin != 7) return RADAU5_ILL_INPUT;
-  if (nsmax != 3 && nsmax != 5 && nsmax != 7) return RADAU5_ILL_INPUT;
+  if (nsmin != 3 && nsmin != 5 && nsmin != 7 && nsmin != 9 && nsmin != 11 && nsmin != 13) return RADAU5_ILL_INPUT;
+  if (nsmax != 3 && nsmax != 5 && nsmax != 7 && nsmax != 9 && nsmax != 11 && nsmax != 13) return RADAU5_ILL_INPUT;
   if (nsmin > nsmax) return RADAU5_ILL_INPUT;
 
   rmem->nsmin  = nsmin;

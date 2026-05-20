@@ -13,8 +13,8 @@ extern "C" {
 #endif
 
 /* Maximum number of stages supported */
-#define RADAU5_NS_MAX 7
-#define RADAU5_NPAIRS_MAX 3  /* (RADAU5_NS_MAX-1)/2 */
+#define RADAU5_NS_MAX 13
+#define RADAU5_NPAIRS_MAX 6  /* (RADAU5_NS_MAX-1)/2 */
 
 /* ---------------------------------------------------------------------------
  * Solver memory structure
@@ -25,7 +25,7 @@ typedef struct Radau5Mem_
   sunindextype n; /* problem dimension */
 
   /* Variable-order support */
-  int ns;      /* current number of stages (3, 5, or 7) */
+  int ns;      /* current number of stages (3, 5, 7, 9, 11, or 13) */
   int npairs;  /* (ns-1)/2: number of complex eigenvalue pairs */
 
   /* User functions */
@@ -84,7 +84,7 @@ typedef struct Radau5Mem_
   N_Vector atol_v;    /* vector atol (NULL if scalar) */
   int itol;           /* 0=scalar, 1=vector */
 
-  /* Method constants (variable-order Radau IIA, ns=3,5,7) */
+  /* Method constants (variable-order Radau IIA, ns=3,5,7,9,11,13) */
   sunrealtype c[RADAU5_NS_MAX];         /* collocation nodes [ns] */
   sunrealtype dd[RADAU5_NS_MAX];        /* error estimation coefficients [ns] */
   sunrealtype u1;                        /* real eigenvalue of A^{-1} */

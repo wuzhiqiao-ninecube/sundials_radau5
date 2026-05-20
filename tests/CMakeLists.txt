@@ -10,6 +10,7 @@ endfunction()
 
 # Unit tests
 radau5_add_test(test_radau5_constants)
+radau5_add_test(test_radau5_constants_high)
 radau5_add_test(test_radau5_api)
 radau5_add_test(test_radau5_build_e1)
 radau5_add_test(test_radau5_build_e2)

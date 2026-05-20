@@ -4,12 +4,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-C implementation of the RADAU solver — a variable-order (3, 5, or 7 stages; orders 5, 9, 13) implicit Runge-Kutta method (Radau IIA family) for stiff ODEs and DAEs. Faithfully translated from the Fortran code by Hairer & Wanner ("Solving ODEs II"), using SUNDIALS abstractions (N_Vector, SUNMatrix, SUNLinearSolver) to support dense, band, and sparse (KLU) linear algebra.
+C implementation of the RADAU solver — a variable-order (3, 5, 7, 9, 11, or 13 stages; orders 5, 9, 13, 17, 21, 25) implicit Runge-Kutta method (Radau IIA family) for stiff ODEs and DAEs. Faithfully translated from the Fortran code by Hairer & Wanner ("Solving ODEs II"), using SUNDIALS abstractions (N_Vector, SUNMatrix, SUNLinearSolver) to support dense, band, and sparse (KLU) linear algebra.
 
-Supports variable stage count via `Radau5SetNumStages(mem, ns)` where ns ∈ {3, 5, 7}:
+Supports variable stage count via `Radau5SetNumStages(mem, ns)` where ns ∈ {3, 5, 7, 9, 11, 13}:
 - **ns=3** (default): 3-stage, order 5 — equivalent to original RADAU5
 - **ns=5**: 5-stage, order 9
 - **ns=7**: 7-stage, order 13
+- **ns=9**: 9-stage, order 17
+- **ns=11**: 11-stage, order 21
+- **ns=13**: 13-stage, order 25
 
 Supports two transform modes for the Newton system decoupling:
 - **Eigenvalue decomposition** (default): classical Hairer-Wanner T/TI eigenvector transform
@@ -26,7 +29,7 @@ bash build.sh radau5_vdpol radau5_rober   # builds into bin/
 mkdir build && cd build
 cmake .. -DSUNDIALS_DIR=/path/to/sundials/install
 make -j$(nproc)
-ctest   # runs all 201 tests (problems × modes × order configs)
+ctest   # runs all 348 tests (problems × modes × order configs)
 ```
 
 The bash `build.sh` hardcodes paths to SUNDIALS build at `/mnt/d/workon/sundials/build` and uses clang. It compiles all radau5 source files together with each example into a standalone executable under `bin/`.
@@ -54,7 +57,7 @@ radau5_Step (radau5_step.c)
 
 ### Key Design Decisions
 
-- **Variable-order support**: `Radau5SetNumStages(mem, ns)` selects a fixed ns=3 (order 5), ns=5 (order 9), or ns=7 (order 13). `Radau5SetOrderLimits(mem, nsmin, nsmax)` enables runtime variable-order selection. Both must be called before `Radau5Init`. Default is ns=3 for backward compatibility. The solver pre-allocates `RADAU5_NPAIRS_MAX=3` complex E2 systems and `RADAU5_NS_MAX=7` stage vectors regardless of the initial ns, so that `radau5_ChangeOrder` can switch orders without reallocation. Step-size exponent is `1/(ns+1)`.
+- **Variable-order support**: `Radau5SetNumStages(mem, ns)` selects a fixed ns=3 (order 5), ns=5 (order 9), ns=7 (order 13), ns=9 (order 17), ns=11 (order 21), or ns=13 (order 25). `Radau5SetOrderLimits(mem, nsmin, nsmax)` enables runtime variable-order selection. Both must be called before `Radau5Init`. Default is ns=3 for backward compatibility. The solver pre-allocates `RADAU5_NPAIRS_MAX=6` complex E2 systems and `RADAU5_NS_MAX=13` stage vectors regardless of the initial ns, so that `radau5_ChangeOrder` can switch orders without reallocation. Step-size exponent is `1/(ns+1)`.
 - **Variable-order selection** (Fortran radau.f lines 900-935): When `variab=1` (nsmin < nsmax), the solver evaluates order-change criteria at label20 before each E1/E2 build. Order increases when `newt_prev > 1 && thetat <= vitu && hquot ∈ (hhod, hhou)` and `ichan > 10`. Order decreases when `thetat >= vitd` or unexpected rejection/Newton failure occurred. Parameters: `vitu=0.002`, `vitd=0.8`, `hhou=1.2`, `hhod=0.8`. After an order change, `radau5_ChangeOrder` reloads constants, updates `nit` and `fnewt`, and zeros starting values. The Gustafsson controller is skipped on the first step after an order change.
 - **E2 is 2n×2n real** (not n×n complex) because SUNDIALS has no complex matrix support. For sparse J, E2 is also sparse. One E2 per complex eigenvalue pair: `E2[0..npairs-1]`.
 - **Eigenvalue mode**: E2[k] = `[[alphn[k]*M-J, -betan[k]*M],[betan[k]*M, alphn[k]*M-J]]` (antisymmetric off-diagonal). E1 and all E2[k] are solved independently.
@@ -133,10 +136,10 @@ The C code closely follows the Fortran structure. Key label mappings in `radau5_
 
 ## Testing
 
-All examples accept command-line arguments: `rtol atol h0 use_schur nsmin nsmax` (positional, optional). Default `nsmin=3 nsmax=7` enables variable-order mode. The `pollu` example has an extra `use_dq` argument before `nsmin nsmax`. Rootfinding examples (bounce, roberts_root, rocket, orbit, kepler, kneeode) take only `nsmin nsmax`.
+All examples accept command-line arguments: `rtol atol h0 use_schur nsmin nsmax` (positional, optional). Default `nsmin=3 nsmax=13` enables variable-order mode. The `pollu` example has an extra `use_dq` argument before `nsmin nsmax`. Rootfinding examples (bounce, roberts_root, rocket, orbit, kepler, kneeode) take only `nsmin nsmax`.
 
 ```shell
-# Run with defaults (variable order, nsmin=3, nsmax=7)
+# Run with defaults (variable order, nsmin=3, nsmax=13)
 ./bin/radau5_vdpol
 
 # Run with fixed ns=5 and Schur mode
@@ -163,11 +166,14 @@ CTest configurations per problem:
 - `radau5_<prob>_eigen_ns3` / `radau5_<prob>_schur_ns3` — fixed order 5 (classic RADAU5)
 - `radau5_<prob>_eigen_ns5` / `radau5_<prob>_schur_ns5` — fixed order 9
 - `radau5_<prob>_eigen_ns7` / `radau5_<prob>_schur_ns7` — fixed order 13
-- `radau5_<prob>_eigen_nsvar` / `radau5_<prob>_schur_nsvar` — variable order 3→7
+- `radau5_<prob>_eigen_ns9` / `radau5_<prob>_schur_ns9` — fixed order 17
+- `radau5_<prob>_eigen_ns11` / `radau5_<prob>_schur_ns11` — fixed order 21
+- `radau5_<prob>_eigen_ns13` / `radau5_<prob>_schur_ns13` — fixed order 25
+- `radau5_<prob>_eigen_nsvar` / `radau5_<prob>_schur_nsvar` — variable order 3→13
 
-DAE-3 problems (andrews, caraxis) and tba skip ns=7 tests (known incompatibility with high-order methods for index-3 DAEs; tba is too slow at ns=7).
+DAE-3 problems (andrews, caraxis) and tba skip ns≥7 tests (known incompatibility with high-order methods for index-3 DAEs; tba is too slow at high ns).
 
-Unit tests: `test_radau5_constants`, `test_radau5_api`, `test_radau5_build_e1`, `test_radau5_build_e2`, `test_radau5_dq_jac`, `test_radau5_colgroup`, `test_radau5_dq_jac_sparse`.
+Unit tests: `test_radau5_constants`, `test_radau5_constants_high`, `test_radau5_api`, `test_radau5_build_e1`, `test_radau5_build_e2`, `test_radau5_dq_jac`, `test_radau5_colgroup`, `test_radau5_dq_jac_sparse`.
 
 ### Examples (24 problems)
 
