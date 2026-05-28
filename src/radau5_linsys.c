@@ -5,9 +5,10 @@
  *   radau5_InitConstants  — Radau IIA method constants (from Fortran radau5.f)
  *   radau5_DQJacDense     — Dense finite-difference Jacobian (CVODE-style)
  *   radau5_BuildE1        — Assemble E1 = fac1*M - J  (n×n real system)
- *   radau5_BuildE2        — Assemble E2 realified 2n×2n complex system
+ *   radau5_BuildE2c       — Assemble n×n complex E2 system
  *   radau5_DecompE1       — Factor E1 via SUNLinSolSetup
- *   radau5_DecompE2       — Factor E2 via SUNLinSolSetup
+ *   radau5_DecompE2c      — Factor E2 via LAPACK zgetrf / KLU klu_z_factor
+ *   radau5_SolveE2c       — Solve E2 via LAPACK zgetrs / KLU klu_z_solve
  *   radau5_ComputeScal    — Error weight vector scal[i] = atol[i] + rtol[i]*|y[i]|
  * ---------------------------------------------------------------------------*/
 
@@ -1129,218 +1130,104 @@ int radau5_BuildE1(Radau5Mem rmem, sunrealtype fac1)
 }
 
 /* ---------------------------------------------------------------------------
- * radau5_BuildE2
+ * radau5_DecompE1
  *
- * Build the 2n×2n system for the coupled block.
- *
- * Eigenvalue mode (use_schur==0):
- *   E2 = [ alphn*M - J,   -betan*M ]
- *        [ betan*M,     alphn*M - J ]
- *
- * Schur mode (use_schur==1):
- *   E2 = [ TS[0][0]/h*M - J,   TS[0][1]/h*M       ]
- *        [ TS[1][0]/h*M,        TS[1][1]/h*M - J   ]
- *
- * (or with I in place of M when M is NULL)
- * J may be dense, band, or sparse. E2 is dense for dense/band J,
- * sparse (CSC) for sparse J.
+ * Factor E1 via SUNLinSolSetup. Increments ndec.
  * ---------------------------------------------------------------------------*/
-int radau5_BuildE2(Radau5Mem rmem, int pair_idx, sunrealtype alphn, sunrealtype betan)
+int radau5_DecompE1(Radau5Mem rmem)
 {
-  sunindextype i, j, k, n;
+  int retval;
+
+  retval = SUNLinSolSetup(rmem->LS_E1, rmem->E1);
+  rmem->ndec++;
+
+  return (retval == 0) ? RADAU5_SUCCESS : RADAU5_SINGULAR_MATRIX;
+}
+
+/* ---------------------------------------------------------------------------
+ * radau5_BuildE2c
+ *
+ * Build the n×n complex system for the coupled block (pair_idx).
+ *
+ * Given the 2×2 block [[a00, a01], [a10, a11]] with a00=a11, a01*a10 < 0:
+ *   ω = sqrt(-a01/a10)
+ *   γ = a00 + i·ω·a10  (complex coefficient)
+ *   E2c[i,j] = γ·M(i,j) - J(i,j)
+ *
+ * Stored as interleaved double[2*...]: [Re(0,0), Im(0,0), Re(1,0), Im(1,0), ...]
+ * Column-major for LAPACK (dense/band) or CSC values for KLU (sparse).
+ * ---------------------------------------------------------------------------*/
+int radau5_BuildE2c(Radau5Mem rmem, int pair_idx, sunrealtype alphn, sunrealtype betan)
+{
+  sunindextype i, j, n;
   sunrealtype  jij, mij;
-  SUNMatrix    J, M, E2;
+  SUNMatrix    J, M;
+  sunrealtype  a00, a01, a10;
 
-  /* For Schur mode, the 2×2 block has 4 independent coefficients.
-   * For eigenvalue mode: a00 = a11 = alphn, a01 = -betan, a10 = betan. */
-  sunrealtype a00, a01, a10, a11;
-
-  n  = rmem->n;
-  J  = rmem->J;
-  M  = rmem->M;
-  E2 = rmem->E2[pair_idx];
+  n = rmem->n;
+  J = rmem->J;
+  M = rmem->M;
 
   if (rmem->use_schur)
   {
-    sunrealtype h = rmem->h;
     int ns = rmem->ns;
-    int r0 = 2 * pair_idx;  /* row/col offset of this 2x2 diagonal block */
-    a00 = rmem->TS_mat[r0 * ns + r0]       / h;
-    a01 = rmem->TS_mat[r0 * ns + (r0 + 1)] / h;
-    a10 = rmem->TS_mat[(r0 + 1) * ns + r0] / h;
-    a11 = rmem->TS_mat[(r0 + 1) * ns + (r0 + 1)] / h;
+    int r0 = 2 * pair_idx;
+    a00 = rmem->TS_mat[r0 * ns + r0] / rmem->h;
+    a01 = rmem->TS_mat[r0 * ns + (r0 + 1)] / rmem->h;
+    a10 = rmem->TS_mat[(r0 + 1) * ns + r0] / rmem->h;
   }
   else
   {
     a00 = alphn;
     a01 = -betan;
     a10 = betan;
-    a11 = alphn;
   }
 
+  /* ω = sqrt(-a01/a10), γ_re = a00, γ_im = ω·a10 = sqrt(-a01·a10) */
+  sunrealtype omega = SUNRsqrt(-a01 / a10);
+  sunrealtype gamma_re = a00;
+  sunrealtype gamma_im = omega * a10;  /* = sqrt(-a01*a10) with sign of a10 */
+  rmem->e2c_omega[pair_idx] = omega;
+
+  double* E2d = rmem->E2c_data[pair_idx];
+
+#ifdef RADAU5_HAVE_KLU
   if (rmem->mat_id == SUNMATRIX_SPARSE)
   {
-    /* --- Sparse (CSC) case ---
-     * Build the 2n×2n CSC matrix.
-     * Column layout of E2 (2n columns):
-     *   col j     (j=0..n-1): top-left block + bottom-left block
-     *   col j+n   (j=0..n-1): top-right block + bottom-right block
-     *
-     * When M is sparse, diagonal blocks use union(J,M) pattern and
-     * off-diagonal blocks use M's pattern. When M is NULL or dense,
-     * the original approach is used.
-     */
-    sunindextype *Jp = SM_INDEXPTRS_S(J);
-    sunindextype *Ji = SM_INDEXVALS_S(J);
-    sunrealtype  *Jd = SM_DATA_S(J);
+    /* Sparse (CSC) case: fill interleaved values over the n×n pattern */
+    sunindextype *Ep = rmem->E2c_colptrs;
+    sunindextype *Ei = rmem->E2c_rowinds;
 
-    sunindextype *E2p = SM_INDEXPTRS_S(E2);
-    sunindextype *E2i = SM_INDEXVALS_S(E2);
-    sunrealtype  *E2d = SM_DATA_S(E2);
-
-    sunindextype pos = 0;
     int m_is_sparse = (M != NULL && SUNMatGetID(M) == SUNMATRIX_SPARSE);
 
-    if (m_is_sparse)
+    for (j = 0; j < n; j++)
     {
-      /* E1 already holds the union(J,M) pattern from SetLinearSolver */
-      SUNMatrix E1 = rmem->E1;
-      sunindextype *Up = SM_INDEXPTRS_S(E1);  /* union pattern */
-      sunindextype *Ui = SM_INDEXVALS_S(E1);
-      sunindextype *Mp = SM_INDEXPTRS_S(M);
-      sunindextype *Mi = SM_INDEXVALS_S(M);
-
-      for (j = 0; j < n; j++)
+      for (sunindextype k = Ep[j]; k < Ep[j + 1]; k++)
       {
-        E2p[j] = pos;
+        i = Ei[k];
 
-        /* Top-left block: a00*M[i,j] - J[i,j] over union pattern */
-        for (k = Up[j]; k < Up[j+1]; k++)
-        {
-          i = Ui[k];
-          E2i[pos] = i;
-          E2d[pos] = a00 * radau5_SparseLookup(M, i, j)
-                   - radau5_SparseLookup(J, i, j);
-          pos++;
-        }
+        /* Look up J(i,j) in J's CSC (binary search) */
+        jij = radau5_SparseLookup(J, i, j);
 
-        /* Bottom-left block: a10*M[i,j] over M's pattern */
-        for (k = Mp[j]; k < Mp[j+1]; k++)
-        {
-          E2i[pos] = Mi[k] + n;
-          E2d[pos] = a10 * SM_DATA_S(M)[k];
-          pos++;
-        }
-      }
-
-      for (j = 0; j < n; j++)
-      {
-        E2p[j + n] = pos;
-
-        /* Top-right block: a01*M[i,j] over M's pattern */
-        for (k = Mp[j]; k < Mp[j+1]; k++)
-        {
-          E2i[pos] = Mi[k];
-          E2d[pos] = a01 * SM_DATA_S(M)[k];
-          pos++;
-        }
-
-        /* Bottom-right block: a11*M[i,j] - J[i,j] over union pattern */
-        for (k = Up[j]; k < Up[j+1]; k++)
-        {
-          i = Ui[k];
-          E2i[pos] = i + n;
-          E2d[pos] = a11 * radau5_SparseLookup(M, i, j)
-                   - radau5_SparseLookup(J, i, j);
-          pos++;
-        }
-      }
-
-      E2p[2 * n] = pos;
-    }
-    else
-    {
-      /* M is NULL or dense — original approach */
-      for (j = 0; j < n; j++)
-      {
-        E2p[j] = pos;
-
-        /* Top-left block: a00*M[i,j] - J[i,j] for each (i,j) in J's pattern */
-        for (k = Jp[j]; k < Jp[j+1]; k++)
-        {
-          i = Ji[k];
-          mij = (M == NULL) ? ((i == j) ? SUN_RCONST(1.0) : SUN_RCONST(0.0))
-                            : SM_ELEMENT_D(M, i, j);
-          E2i[pos] = i;
-          E2d[pos] = a00 * mij - Jd[k];
-          pos++;
-        }
-
-        /* Bottom-left block: a10*M[i,j] */
+        /* Look up M(i,j) */
         if (M == NULL)
-        {
-          E2i[pos] = j + n;
-          E2d[pos] = a10;
-          pos++;
-        }
+          mij = (i == j) ? SUN_RCONST(1.0) : SUN_RCONST(0.0);
+        else if (m_is_sparse)
+          mij = radau5_SparseLookup(M, i, j);
         else
-        {
-          for (i = 0; i < n; i++)
-          {
-            mij = SM_ELEMENT_D(M, i, j);
-            if (mij != SUN_RCONST(0.0))
-            {
-              E2i[pos] = i + n;
-              E2d[pos] = a10 * mij;
-              pos++;
-            }
-          }
-        }
+          mij = SM_ELEMENT_D(M, i, j);
+
+        /* E2c[i,j] = (gamma_re + i*gamma_im)*mij - jij */
+        E2d[2 * k]     = gamma_re * mij - jij;
+        E2d[2 * k + 1] = gamma_im * mij;
       }
-
-      for (j = 0; j < n; j++)
-      {
-        E2p[j + n] = pos;
-
-        /* Top-right block: a01*M[i,j] */
-        if (M == NULL)
-        {
-          E2i[pos] = j;
-          E2d[pos] = a01;
-          pos++;
-        }
-        else
-        {
-          for (i = 0; i < n; i++)
-          {
-            mij = SM_ELEMENT_D(M, i, j);
-            if (mij != SUN_RCONST(0.0))
-            {
-              E2i[pos] = i;
-              E2d[pos] = a01 * mij;
-              pos++;
-            }
-          }
-        }
-
-        /* Bottom-right block: a11*M[i,j] - J[i,j] */
-        for (k = Jp[j]; k < Jp[j+1]; k++)
-        {
-          i = Ji[k];
-          mij = (M == NULL) ? ((i == j) ? SUN_RCONST(1.0) : SUN_RCONST(0.0))
-                            : SM_ELEMENT_D(M, i, j);
-          E2i[pos] = i + n;
-          E2d[pos] = a11 * mij - Jd[k];
-          pos++;
-        }
-      }
-
-      E2p[2 * n] = pos;
     }
+    return RADAU5_SUCCESS;
   }
-  else
+#endif
+
+  /* Dense / Band case: column-major interleaved */
   {
-    /* --- Dense / Band case (E2 is always dense) --- */
     int j_is_band = (rmem->mat_id == SUNMATRIX_BAND);
     sunindextype mu = rmem->mu;
     sunindextype ml = rmem->ml;
@@ -1373,10 +1260,10 @@ int radau5_BuildE2(Radau5Mem rmem, int pair_idx, sunrealtype alphn, sunrealtype 
           mij = SM_ELEMENT_D(M, i, j);
         }
 
-        SM_ELEMENT_D(E2, i,     j    ) = a00 * mij - jij;
-        SM_ELEMENT_D(E2, i,     j + n) = a01 * mij;
-        SM_ELEMENT_D(E2, i + n, j    ) = a10 * mij;
-        SM_ELEMENT_D(E2, i + n, j + n) = a11 * mij - jij;
+        /* E2c[i + j*n] = (gamma_re + i*gamma_im)*mij - jij */
+        sunindextype idx = 2 * (i + j * n);
+        E2d[idx]     = gamma_re * mij - jij;
+        E2d[idx + 1] = gamma_im * mij;
       }
     }
   }
@@ -1385,33 +1272,104 @@ int radau5_BuildE2(Radau5Mem rmem, int pair_idx, sunrealtype alphn, sunrealtype 
 }
 
 /* ---------------------------------------------------------------------------
- * radau5_DecompE1
+ * radau5_DecompE2c
  *
- * Factor E1 via SUNLinSolSetup. Increments ndec.
+ * Factor the n×n complex E2 matrix. Uses LAPACK zgetrf for dense/band,
+ * KLU klu_z_factor/klu_z_refactor for sparse. Increments ndec.
  * ---------------------------------------------------------------------------*/
-int radau5_DecompE1(Radau5Mem rmem)
-{
-  int retval;
 
-  retval = SUNLinSolSetup(rmem->LS_E1, rmem->E1);
+/* LAPACK prototypes (Fortran calling convention) */
+extern void zgetrf_(int* m, int* n, double* A, int* lda, int* ipiv, int* info);
+extern void zgetrs_(char* trans, int* n, int* nrhs, double* A, int* lda,
+                    int* ipiv, double* B, int* ldb, int* info);
+
+int radau5_DecompE2c(Radau5Mem rmem, int pair_idx)
+{
   rmem->ndec++;
 
-  return (retval == 0) ? RADAU5_SUCCESS : RADAU5_SINGULAR_MATRIX;
+#ifdef RADAU5_HAVE_KLU
+  if (rmem->mat_id == SUNMATRIX_SPARSE)
+  {
+    if (rmem->E2c_Numeric[pair_idx] == NULL)
+    {
+      rmem->E2c_Numeric[pair_idx] = klu_z_factor(
+        (int*)rmem->E2c_colptrs, (int*)rmem->E2c_rowinds,
+        rmem->E2c_data[pair_idx],
+        (klu_symbolic*)rmem->E2c_Symbolic, (klu_common*)rmem->E2c_Common_ptr);
+    }
+    else
+    {
+      klu_z_refactor(
+        (int*)rmem->E2c_colptrs, (int*)rmem->E2c_rowinds,
+        rmem->E2c_data[pair_idx],
+        (klu_symbolic*)rmem->E2c_Symbolic,
+        (klu_numeric*)rmem->E2c_Numeric[pair_idx], (klu_common*)rmem->E2c_Common_ptr);
+    }
+    return (rmem->E2c_Numeric[pair_idx] != NULL) ? RADAU5_SUCCESS
+                                                  : RADAU5_SINGULAR_MATRIX;
+  }
+#endif
+
+  /* Dense/Band: LAPACK zgetrf */
+  {
+    int N = (int)rmem->n;
+    int info;
+    zgetrf_(&N, &N, rmem->E2c_data[pair_idx], &N,
+            rmem->E2c_ipiv[pair_idx], &info);
+    return (info == 0) ? RADAU5_SUCCESS : RADAU5_SINGULAR_MATRIX;
+  }
 }
 
 /* ---------------------------------------------------------------------------
- * radau5_DecompE2
+ * radau5_SolveE2c
  *
- * Factor E2 via SUNLinSolSetup. Increments ndec.
+ * Solve the n×n complex system for pair_idx.
+ * Input:  rhs_re[0..n-1], rhs_im[0..n-1] (real and imaginary parts of RHS)
+ * Output: rhs_re[0..n-1], rhs_im[0..n-1] (overwritten with solution)
+ *
+ * Applies ω-scaling: pack d = rhs_re + i·ω·rhs_im, solve K·z = d,
+ * unpack x_re = Re(z), x_im = Im(z)/ω.
  * ---------------------------------------------------------------------------*/
-int radau5_DecompE2(Radau5Mem rmem, int pair_idx)
+int radau5_SolveE2c(Radau5Mem rmem, int pair_idx,
+                    sunrealtype* rhs_re, sunrealtype* rhs_im)
 {
-  int retval;
+  sunindextype n = rmem->n;
+  sunrealtype omega = rmem->e2c_omega[pair_idx];
+  double* work = rmem->E2c_rhs[pair_idx];
 
-  retval = SUNLinSolSetup(rmem->LS_E2[pair_idx], rmem->E2[pair_idx]);
-  rmem->ndec++;
+  /* Pack: work[i] = rhs_re[i] + i·ω·rhs_im[i] */
+  for (sunindextype i = 0; i < n; i++)
+  {
+    work[2 * i]     = (double)rhs_re[i];
+    work[2 * i + 1] = (double)(omega * rhs_im[i]);
+  }
 
-  return (retval == 0) ? RADAU5_SUCCESS : RADAU5_SINGULAR_MATRIX;
+#ifdef RADAU5_HAVE_KLU
+  if (rmem->mat_id == SUNMATRIX_SPARSE)
+  {
+    klu_z_solve(
+      (klu_symbolic*)rmem->E2c_Symbolic,
+      (klu_numeric*)rmem->E2c_Numeric[pair_idx],
+      (int)n, 1, work, (klu_common*)rmem->E2c_Common_ptr);
+  }
+  else
+#endif
+  {
+    /* LAPACK zgetrs */
+    int N = (int)n, nrhs = 1, info;
+    char trans = 'N';
+    zgetrs_(&trans, &N, &nrhs, rmem->E2c_data[pair_idx], &N,
+            rmem->E2c_ipiv[pair_idx], work, &N, &info);
+  }
+
+  /* Unpack: x_re = Re(z), x_im = Im(z)/ω */
+  for (sunindextype i = 0; i < n; i++)
+  {
+    rhs_re[i] = (sunrealtype)work[2 * i];
+    rhs_im[i] = (sunrealtype)(work[2 * i + 1] / omega);
+  }
+
+  return RADAU5_SUCCESS;
 }
 
 /* ---------------------------------------------------------------------------

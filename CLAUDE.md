@@ -18,6 +18,8 @@ Supports two transform modes for the Newton system decoupling:
 - **Eigenvalue decomposition** (default): classical Hairer-Wanner T/TI eigenvector transform
 - **Schur decomposition** (optional): orthogonal US/TS transform via `Radau5SetSchurDecomp(mem, 1)`
 
+The complex eigenvalue pairs are solved as n×n complex systems (not 2n×2n real) using LAPACK `zgetrf`/`zgetrs` (dense/band) or KLU `klu_z_factor`/`klu_z_solve` (sparse), bypassing SUNDIALS' real-only linear solver interface.
+
 ## Build
 
 ```shell
@@ -29,7 +31,7 @@ bash build.sh radau5_vdpol radau5_rober   # builds into bin/
 mkdir build && cd build
 cmake .. -DSUNDIALS_DIR=/path/to/sundials/install
 make -j$(nproc)
-ctest   # runs all 348 tests (problems × modes × order configs)
+ctest   # runs all tests (problems × modes × order configs)
 ```
 
 The bash `build.sh` hardcodes paths to SUNDIALS build at `/mnt/d/workon/sundials/build` and uses clang. It compiles all radau5 source files together with each example into a standalone executable under `bin/`.
@@ -42,12 +44,12 @@ The bash `build.sh` hardcodes paths to SUNDIALS build at `/mnt/d/workon/sundials
 radau5_Step (radau5_step.c)
   ├─ Entry: skipdecomp? → ikeep/label30 | caljac? → label20 | → label10
   ├─ label10: Compute Jacobian (analytic or DQ)
-  ├─ label20: Variable-order selection (if variab), then Build E1/E2, factor all
+  ├─ label20: Variable-order selection (if variab), then Build E1/E2c, factor all
   ├─ label30: Newton iteration (radau5_newt.c)
   │    ├─ Evaluate RHS at ns collocation points (t+c[k]*h, k=0..ns-1)
   │    ├─ Forward transform (TI or US^T) → form linear system RHS
-  │    ├─ Eigenvalue mode: solve E1 + E2[0..npairs-1] independently
-  │    ├─ Schur mode: block back-substitution (E1 for last stage, then E2[k] pairs)
+  │    ├─ Eigenvalue mode: solve E1 + E2c[0..npairs-1] independently (complex n×n)
+  │    ├─ Schur mode: block back-substitution (E1 for last stage, then E2c[k] pairs)
   │    ├─ Back-transform (T or US) → update Z[0..ns-1]
   │    └─ Convergence check (theta, faccon, fnewt)
   ├─ Error estimate (radau5_estrad.c)
@@ -59,9 +61,9 @@ radau5_Step (radau5_step.c)
 
 - **Variable-order support**: `Radau5SetNumStages(mem, ns)` selects a fixed ns=3 (order 5), ns=5 (order 9), ns=7 (order 13), ns=9 (order 17), ns=11 (order 21), or ns=13 (order 25). `Radau5SetOrderLimits(mem, nsmin, nsmax)` enables runtime variable-order selection. Both must be called before `Radau5Init`. Default is ns=3 for backward compatibility. The solver pre-allocates `RADAU5_NPAIRS_MAX=6` complex E2 systems and `RADAU5_NS_MAX=13` stage vectors regardless of the initial ns, so that `radau5_ChangeOrder` can switch orders without reallocation. Step-size exponent is `1/(ns+1)`.
 - **Variable-order selection** (Fortran radau.f lines 900-935): When `variab=1` (nsmin < nsmax), the solver evaluates order-change criteria at label20 before each E1/E2 build. Order increases when `newt_prev > 1 && thetat <= vitu && hquot ∈ (hhod, hhou)` and `ichan > 10`. Order decreases when `thetat >= vitd` or unexpected rejection/Newton failure occurred. Parameters: `vitu=0.002`, `vitd=0.8`, `hhou=1.2`, `hhod=0.8`. After an order change, `radau5_ChangeOrder` reloads constants, updates `nit` and `fnewt`, and zeros starting values. The Gustafsson controller is skipped on the first step after an order change.
-- **E2 is 2n×2n real** (not n×n complex) because SUNDIALS has no complex matrix support. For sparse J, E2 is also sparse. One E2 per complex eigenvalue pair: `E2[0..npairs-1]`.
-- **Eigenvalue mode**: E2[k] = `[[alphn[k]*M-J, -betan[k]*M],[betan[k]*M, alphn[k]*M-J]]` (antisymmetric off-diagonal). E1 and all E2[k] are solved independently.
-- **Schur mode**: E2[k] uses the k-th 2×2 diagonal block of TS: `[[TS[r0][r0]/h*M-J, TS[r0][r1]/h*M],[TS[r1][r0]/h*M, TS[r1][r1]/h*M-J]]` where r0=2k, r1=2k+1. Uses block back-substitution from bottom-right 1×1 block upward through each 2×2 block, with TS upper-triangular coupling terms.
+- **E2 is n×n complex** — solved directly via LAPACK `zgetrf`/`zgetrs` (dense/band) or KLU `klu_z_factor`/`klu_z_solve` (sparse), bypassing SUNDIALS' real-only SUNLinearSolver interface. The 2×2 real block `[[a00, a01],[a10, a11]]` (with `a00=a11`, `a01*a10 < 0`) is reduced to a single complex system via the transform `ω = sqrt(-a01/a10)`, `γ = a00 + i·ω·a10`. RHS packing: `d = b_re + i·ω·b_im`. Solution unpacking: `x_re = Re(z)`, `x_im = Im(z)/ω`. For eigenvalue mode `ω=1`; for Schur mode `ω` varies per pair. One complex E2 per eigenvalue pair: `E2c_data[0..npairs-1]`.
+- **Eigenvalue mode**: Complex coefficient `γ = alphn + i·betan` (since `ω=1`). E1 and all E2 are solved independently.
+- **Schur mode**: Complex coefficient `γ = a00 + i·sqrt(-a01·a10)` from the k-th 2×2 diagonal block of TS. Uses block back-substitution from bottom-right 1×1 block upward through each 2×2 block, with TS upper-triangular coupling terms.
 - **Tolerance transformation**: Fortran RADAU5 internally transforms `rtol = 0.1 * rtol^(2/3)`. This is done once in `Radau5Solve` on first call (`tol_transformed` flag). The transformation modifies tolerances in-place (original values are not preserved). If the user re-sets tolerances via `Radau5SStolerances` or `Radau5SVtolerances` between `Radau5Solve` calls, `tol_transformed` is reset to 0 so the new tolerances are properly transformed on the next call.
 - **Step reuse**: `skipdecomp` flag allows skipping both Jacobian and LU decomposition when `qt = hnew/h ∈ [quot1, quot2]` (default [1.0, 1.2]).
 - **Newton slow-convergence**: Returns `RADAU5_NEWT_PREDICT` (not `CONV_FAILURE`) when Newton predicts slow convergence and already reduced h — caller skips the label78 h*=0.5 path.
@@ -70,7 +72,7 @@ radau5_Step (radau5_step.c)
 - **DQ Jacobian increment (dense)**: Uses Fortran radau5.f formula `DELT=sqrt(UROUND*max(1e-5,|y_j|))` rather than CVODE-style formula. This matches the original Fortran behavior for stiff DAE problems.
 - **Discontinuity handling**: `Radau5ResetForDiscontinuity(mem, h0)` resets solver state at discontinuity boundaries (h, first, reject, nsing, faccon), matching Fortran radau5 entry behavior. The `first` flag is automatically cleared after the first accepted step, restoring extrapolation for subsequent steps.
 - **Mass matrix M**: User-owned (not destroyed by `Radau5Free`).
-- **Sparse M with sparse J**: When both M and J are sparse, E1's sparsity pattern is the union of J and M, computed eagerly in `Radau5SetLinearSolver(mem, J, M)` via `radau5_SparseUnion`. E2 NNZ = 2×nnz_union + 2×nnz_M. The M parameter is only needed for sparse pattern computation; pass NULL when J is dense/band or when there is no mass matrix.
+- **Sparse M with sparse J**: When both M and J are sparse, E1's sparsity pattern is the union of J and M, computed eagerly in `Radau5SetLinearSolver(mem, J, M)` via `radau5_SparseUnion`. The complex E2 uses the same n×n pattern (union or J-only) with interleaved real/imag values (`double[2*nnz]`). The M parameter is only needed for sparse pattern computation; pass NULL when J is dense/band or when there is no mass matrix.
 - **Continuous output**: Uses Newton divided-difference algorithm (general for all ns). After each accepted step, computes `cont[0..ns]` coefficients where `cont[0]=ycur` and `cont[1..ns]` are divided differences on nodes `c[ns-1], c[ns-2], ..., c[0], 0`. Evaluation via `Radau5Contr` uses Horner form: `s=(t-xsol)/hsol+1`, then descends from `cont[ns]` through `cont[0]`. This matches the Fortran `CONTRA` function exactly.
 - **Step extrapolation**: Newton starting values for the next step use the continuous output polynomial evaluated at new collocation points: `z[k] = c[k]*hquot * P(c[k]*hquot)` where P is the Horner evaluation of `cont[1..ns]`. The forward transform `f = TI * z` is then applied. This general algorithm (from Fortran radau.f ns=5/7 blocks) works for all ns values.
 - **Event detection (rootfinding)**: User provides `Radau5RootFn g(t, y, gout, user_data)` via `Radau5RootInit(mem, nrtfn, g)`. After each accepted step, the solver evaluates g at the step endpoint and checks for sign changes vs the step start. If detected, the Illinois method (modified regula falsi) refines the root location using `Radau5Contr` dense output interpolation — no extra RHS evaluations needed. Solver stops at the root and returns `RADAU5_ROOT_RETURN = 3`. User queries `Radau5GetRootInfo` for which functions fired (+1 rising, -1 falling), then resumes with another `Radau5Solve` call. Direction filtering via `Radau5SetRootDirection`. Root tolerance: `100*uround*max(|tlo|,|thi|)` (matches SUNDIALS).
@@ -81,7 +83,7 @@ radau5_Step (radau5_step.c)
 |------|---------|
 | `radau5.c` | Create/Free/Init/Solve, all setters/getters, tolerance transformation |
 | `radau5_impl.h` | `Radau5Mem_` struct, internal function prototypes |
-| `radau5_linsys.c` | Method constants (eigen + Schur), DQ Jacobian (dense/band/sparse), BuildE1/E2, DecompE1/E2, ChangeOrder, ComputeScal, MassMult, SparseUnion/SparseLookup |
+| `radau5_linsys.c` | Method constants (eigen + Schur), DQ Jacobian (dense/band/sparse), BuildE1/BuildE2c/DecompE1/DecompE2c/SolveE2c, ChangeOrder, ComputeScal, MassMult, SparseUnion/SparseLookup |
 | `radau5_newt.c` | Generalized Newton iteration for variable ns with eigenvalue/Schur branches |
 | `radau5_step.c` | Single step attempt: Jac reuse logic, variable-order selection, Newton, error estimate, accept/reject, general extrapolation |
 | `radau5_estrad.c` | Error estimation (ESTRAV from Fortran, general ns-term loop) |
@@ -104,8 +106,8 @@ For ns=5: TS is 5×5 with two 2×2 blocks + one 1×1 block. For ns=7: TS is 7×7
 
 - `use_schur` flag in `Radau5Mem_`, set via `Radau5SetSchurDecomp()` (re-runs `radau5_InitConstants`)
 - `radau5_InitConstants()`: populates `US_mat[ns*ns]`, `TS_mat[ns*ns]`, overrides `u1=TS[ns-1][ns-1]`, sets `T=US`, `TI=US^T`
-- `radau5_BuildE2(rmem, pair_idx, ...)`: uses the pair_idx-th 2×2 diagonal block of TS: `TS[r0:r1, r0:r1]` where `r0=2*pair_idx`
-- `radau5_newt.c`: Schur path uses full TS row scalings + block back-substitution from bottom-right 1×1 block upward; back-transform uses full ns×ns US
+- `radau5_BuildE2c(rmem, pair_idx, ...)`: extracts the pair_idx-th 2×2 diagonal block of TS, computes `ω = sqrt(-a01/a10)` and `γ = a00 + i·ω·a10`, builds n×n complex matrix `γ·M - J`
+- `radau5_newt.c`: Schur path uses full TS row scalings + block back-substitution from bottom-right 1×1 block upward; complex solve via `radau5_SolveE2c`; back-transform uses full ns×ns US
 - `radau5_estrad.c`, `radau5_contr.c`: no changes needed (work in physical Z-space)
 
 ### Fortran Correspondence

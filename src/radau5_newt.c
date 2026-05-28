@@ -80,25 +80,33 @@ int radau5_Newton(Radau5Mem rmem, int* newt_out)
      *    z[k] currently holds RHS values a[k].
      *    After: z[k] = sum_j TI[k][j] * a[j]
      * ----------------------------------------------------------------*/
-    {
-      sunrealtype a_vals[RADAU5_NS_MAX];
-      /* NVEC_DIRECT_ACCESS: ns×ns dense matrix applied per-component across stage vectors */
-      sunrealtype *zd[RADAU5_NS_MAX];
-      for (int k = 0; k < ns; k++)
-        zd[k] = N_VGetArrayPointer(rmem->z[k]);
+    // {
+    //   sunrealtype a_vals[RADAU5_NS_MAX];
+    //   /* NVEC_DIRECT_ACCESS: ns×ns dense matrix applied per-component across stage vectors */
+    //   sunrealtype *zd[RADAU5_NS_MAX];
+    //   for (int k = 0; k < ns; k++)
+    //     zd[k] = N_VGetArrayPointer(rmem->z[k]);
+    //
+    //   for (sunindextype i = 0; i < n; i++)
+    //   {
+    //     for (int k = 0; k < ns; k++)
+    //       a_vals[k] = zd[k][i];
+    //     for (int k = 0; k < ns; k++)
+    //     {
+    //       sunrealtype sum = SUN_RCONST(0.0);
+    //       for (int j = 0; j < ns; j++)
+    //         sum += rmem->TI_mat[k * ns + j] * a_vals[j];
+    //       zd[k][i] = sum;
+    //     }
+    //   }
+    // }
 
-      for (sunindextype i = 0; i < n; i++)
-      {
-        for (int k = 0; k < ns; k++)
-          a_vals[k] = zd[k][i];
-        for (int k = 0; k < ns; k++)
-        {
-          sunrealtype sum = SUN_RCONST(0.0);
-          for (int j = 0; j < ns; j++)
-            sum += rmem->TI_mat[k * ns + j] * a_vals[j];
-          zd[k][i] = sum;
-        }
-      }
+    for (int k = 0; k < ns; k++) {
+      N_VLinearCombination(ns, &(rmem->TI_mat[k * ns]), rmem->z, rmem->w[k]);
+    }
+
+    for (int k = 0; k < ns; k++) {
+      N_VScale(SUN_RCONST(1.0),rmem->w[k], rmem->z[k]);
     }
 
     /* ------------------------------------------------------------------
@@ -200,27 +208,11 @@ int radau5_Newton(Radau5Mem rmem, int* newt_out)
       {
         int r0 = 2 * pk, r1 = r0 + 1;
 
-        /* NVEC_DIRECT_ACCESS: Interleaving n-vectors into 2n-vector for block linear solve */
-        sunrealtype *rhs2d = N_VGetArrayPointer(rmem->rhs2[pk]);
-        for (sunindextype ii = 0; ii < n; ii++)
-        {
-          rhs2d[ii]     = zd[r0][ii];
-          rhs2d[ii + n] = zd[r1][ii];
-        }
-
-        if (SUNLinSolSolve(rmem->LS_E2[pk], rmem->E2[pk], rmem->sol2[pk],
-                           rmem->rhs2[pk], SUN_RCONST(0.0)) != 0)
+        if (radau5_SolveE2c(rmem, pk, zd[r0], zd[r1]) != RADAU5_SUCCESS)
         {
           if (mf_alloc) free(mf_alloc);
           if (n > 1024) free(mf_buf);
           return RADAU5_LSOLVE_FAIL;
-        }
-
-        sunrealtype *sol2d = N_VGetArrayPointer(rmem->sol2[pk]);
-        for (sunindextype ii = 0; ii < n; ii++)
-        {
-          zd[r0][ii] = sol2d[ii];
-          zd[r1][ii] = sol2d[ii + n];
         }
 
         /* Back-substitute into earlier rows */
@@ -327,26 +319,11 @@ int radau5_Newton(Radau5Mem rmem, int* newt_out)
       for (int pk = 0; pk < npairs; pk++)
       {
         int r0 = 2 * pk + 1, r1 = r0 + 1;
-        /* NVEC_DIRECT_ACCESS: Interleaving n-vectors into 2n-vector for block linear solve */
-        sunrealtype *rhs2d = N_VGetArrayPointer(rmem->rhs2[pk]);
-        for (sunindextype ii = 0; ii < n; ii++)
-        {
-          rhs2d[ii]     = zd[r0][ii];
-          rhs2d[ii + n] = zd[r1][ii];
-        }
 
-        if (SUNLinSolSolve(rmem->LS_E2[pk], rmem->E2[pk], rmem->sol2[pk],
-                           rmem->rhs2[pk], SUN_RCONST(0.0)) != 0)
+        if (radau5_SolveE2c(rmem, pk, zd[r0], zd[r1]) != RADAU5_SUCCESS)
         {
           if (n > 1024) free(mf_buf);
           return RADAU5_LSOLVE_FAIL;
-        }
-
-        sunrealtype *sol2d = N_VGetArrayPointer(rmem->sol2[pk]);
-        for (sunindextype ii = 0; ii < n; ii++)
-        {
-          zd[r0][ii] = sol2d[ii];
-          zd[r1][ii] = sol2d[ii + n];
         }
       }
 

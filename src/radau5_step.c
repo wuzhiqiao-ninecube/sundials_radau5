@@ -163,14 +163,14 @@ label20:
   for (int pk = 0; pk < rmem->npairs; pk++) {
     sunrealtype alphn_k = rmem->alph[pk] / rmem->h;
     sunrealtype betan_k = rmem->beta_eig[pk] / rmem->h;
-    radau5_BuildE2(rmem, pk, alphn_k, betan_k);
+    radau5_BuildE2c(rmem, pk, alphn_k, betan_k);
   }
 
   ret = radau5_DecompE1(rmem);
   if (ret != RADAU5_SUCCESS) goto label78;
 
   for (int pk = 0; pk < rmem->npairs; pk++) {
-    ret = radau5_DecompE2(rmem, pk);
+    ret = radau5_DecompE2c(rmem, pk);
     if (ret != RADAU5_SUCCESS) goto label78;
   }
   ret = RADAU5_SUCCESS;

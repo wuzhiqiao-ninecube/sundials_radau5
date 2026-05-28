@@ -1,8 +1,8 @@
 /* ---------------------------------------------------------------------------
- * test_radau5_build_e2.c — Verify E2 realified 2n×2n matrix assembly
+ * test_radau5_build_e2.c — Verify complex n×n E2 matrix assembly and solve
  *
- * For a known 2×2 Jacobian, builds the realified complex matrix E2 and
- * checks the 2×2 block structure.
+ * For a known 2×2 Jacobian, builds the complex E2 matrix and verifies
+ * that the complex solve produces the same result as the analytical solution.
  * ---------------------------------------------------------------------------*/
 
 #include <stdio.h>
@@ -16,7 +16,7 @@
 #include "radau5_impl.h"
 
 static int nfail = 0;
-#define TOL 1.0e-14
+#define TOL 1.0e-12
 
 #define CHECK_VAL(name, got, exp) do { \
   if (fabs((got)-(exp)) > TOL) { \
@@ -60,70 +60,84 @@ int main(void)
   SM_ELEMENT_D(rmem->J, 1, 0) = 3.0;
   SM_ELEMENT_D(rmem->J, 1, 1) = 4.0;
 
-  /* --- Test 1: Identity mass (M == NULL) ---
-   * E2[0] = [ alphn*I - J,   -betan*I ]
-   *         [ betan*I,     alphn*I - J ]
+  /* --- Test 1: Identity mass (M == NULL), eigenvalue mode ---
+   * Complex matrix K = (alphn + i*betan)*I - J
+   * K[0,0] = (3+2i) - 1 = 2+2i
+   * K[0,1] = 0 - 2 = -2
+   * K[1,0] = 0 - 3 = -3
+   * K[1,1] = (3+2i) - 4 = -1+2i
    */
-  radau5_BuildE2(rmem, 0, alphn, betan);
+  rmem->h = 1.0;  /* so alphn/h = alphn */
+  radau5_BuildE2c(rmem, 0, alphn, betan);
 
-  sunrealtype Jv[2][2] = {{1,2},{3,4}};
+  /* Check omega = 1 for eigenvalue mode (a01=-betan, a10=betan) */
+  CHECK_VAL("omega_eigen", rmem->e2c_omega[0], 1.0);
 
-  for (sunindextype j = 0; j < n; j++) {
-    for (sunindextype i = 0; i < n; i++) {
-      sunrealtype delta_ij = (i == j) ? 1.0 : 0.0;
-      sunrealtype e_tl = alphn * delta_ij - Jv[i][j];
-      sunrealtype e_tr = -betan * delta_ij;
-      sunrealtype e_bl = betan * delta_ij;
-      sunrealtype e_br = alphn * delta_ij - Jv[i][j];
+  /* Check E2c_data: interleaved [Re,Im] column-major
+   * Col 0: (0,0)=(2,2), (1,0)=(-3,0)
+   * Col 1: (0,1)=(-2,0), (1,1)=(-1,2) */
+  double* E2d = rmem->E2c_data[0];
+  CHECK_VAL("E2c[0,0].re", E2d[0], 2.0);
+  CHECK_VAL("E2c[0,0].im", E2d[1], 2.0);
+  CHECK_VAL("E2c[1,0].re", E2d[2], -3.0);
+  CHECK_VAL("E2c[1,0].im", E2d[3], 0.0);
+  CHECK_VAL("E2c[0,1].re", E2d[4], -2.0);
+  CHECK_VAL("E2c[0,1].im", E2d[5], 0.0);
+  CHECK_VAL("E2c[1,1].re", E2d[6], -1.0);
+  CHECK_VAL("E2c[1,1].im", E2d[7], 2.0);
 
-      char buf[64];
-      sprintf(buf, "E2_TL[%d][%d]", (int)i, (int)j);
-      CHECK_VAL(buf, SM_ELEMENT_D(rmem->E2[0], i, j), e_tl);
+  /* --- Test 2: Factor and solve ---
+   * Solve K*z = d where d = (1+0i, 0+0i)
+   * i.e. rhs_re = [1, 0], rhs_im = [0, 0] */
+  int ret = radau5_DecompE2c(rmem, 0);
+  CHECK_VAL("decomp_ret", (double)ret, 0.0);
 
-      sprintf(buf, "E2_TR[%d][%d+n]", (int)i, (int)j);
-      CHECK_VAL(buf, SM_ELEMENT_D(rmem->E2[0], i, j + n), e_tr);
+  sunrealtype rhs_re[2] = {1.0, 0.0};
+  sunrealtype rhs_im[2] = {0.0, 0.0};
+  radau5_SolveE2c(rmem, 0, rhs_re, rhs_im);
 
-      sprintf(buf, "E2_BL[%d+n][%d]", (int)i, (int)j);
-      CHECK_VAL(buf, SM_ELEMENT_D(rmem->E2[0], i + n, j), e_bl);
+  /* Verify: K * x = rhs
+   * x = K^{-1} * [1, 0]^T
+   * K = [[2+2i, -2], [-3, -1+2i]]
+   * det(K) = (2+2i)(-1+2i) - (-2)(-3) = (-2+4i-2i+4i^2) - 6
+   *        = (-2+2i-4) - 6 = -12+2i
+   * K^{-1} = 1/det * [[-1+2i, 2], [3, 2+2i]]
+   * x[0] = (-1+2i)/(-12+2i) = (-1+2i)(-12-2i)/(144+4) = (12+2i-24i-4i^2)/(148)
+   *       = (12+2i-24i+4)/148 = (16-22i)/148 = (8-11i)/74
+   * x[1] = 3/(-12+2i) = 3*(-12-2i)/148 = (-36-6i)/148 = (-18-3i)/74
+   */
+  sunrealtype x0_re_exp = 8.0 / 74.0;
+  sunrealtype x0_im_exp = -11.0 / 74.0;
+  sunrealtype x1_re_exp = -18.0 / 74.0;
+  sunrealtype x1_im_exp = -3.0 / 74.0;
 
-      sprintf(buf, "E2_BR[%d+n][%d+n]", (int)i, (int)j);
-      CHECK_VAL(buf, SM_ELEMENT_D(rmem->E2[0], i + n, j + n), e_br);
-    }
-  }
+  CHECK_VAL("solve_x0_re", rhs_re[0], x0_re_exp);
+  CHECK_VAL("solve_x0_im", rhs_im[0], x0_im_exp);
+  CHECK_VAL("solve_x1_re", rhs_re[1], x1_re_exp);
+  CHECK_VAL("solve_x1_im", rhs_im[1], x1_im_exp);
 
-  /* --- Test 2: General mass matrix ---
+  /* --- Test 3: General mass matrix ---
    * M = [ 2  0 ]
-   *     [ 0  3 ] */
+   *     [ 0  3 ]
+   * K = (3+2i)*M - J = [(6+4i)-1, -2] = [5+4i, -2]
+   *                     [-3, (9+6i)-4]   [-3, 5+6i]
+   */
   rmem->M = SUNDenseMatrix(n, n, sunctx);
   SUNMatZero(rmem->M);
   SM_ELEMENT_D(rmem->M, 0, 0) = 2.0;
   SM_ELEMENT_D(rmem->M, 1, 1) = 3.0;
 
-  radau5_BuildE2(rmem, 0, alphn, betan);
+  radau5_BuildE2c(rmem, 0, alphn, betan);
 
-  sunrealtype Mv[2][2] = {{2,0},{0,3}};
-
-  for (sunindextype j = 0; j < n; j++) {
-    for (sunindextype i = 0; i < n; i++) {
-      sunrealtype e_tl = alphn * Mv[i][j] - Jv[i][j];
-      sunrealtype e_tr = -betan * Mv[i][j];
-      sunrealtype e_bl = betan * Mv[i][j];
-      sunrealtype e_br = alphn * Mv[i][j] - Jv[i][j];
-
-      char buf[64];
-      sprintf(buf, "E2_mass_TL[%d][%d]", (int)i, (int)j);
-      CHECK_VAL(buf, SM_ELEMENT_D(rmem->E2[0], i, j), e_tl);
-
-      sprintf(buf, "E2_mass_TR[%d][%d+n]", (int)i, (int)j);
-      CHECK_VAL(buf, SM_ELEMENT_D(rmem->E2[0], i, j + n), e_tr);
-
-      sprintf(buf, "E2_mass_BL[%d+n][%d]", (int)i, (int)j);
-      CHECK_VAL(buf, SM_ELEMENT_D(rmem->E2[0], i + n, j), e_bl);
-
-      sprintf(buf, "E2_mass_BR[%d+n][%d+n]", (int)i, (int)j);
-      CHECK_VAL(buf, SM_ELEMENT_D(rmem->E2[0], i + n, j + n), e_br);
-    }
-  }
+  E2d = rmem->E2c_data[0];
+  CHECK_VAL("E2c_mass[0,0].re", E2d[0], 5.0);
+  CHECK_VAL("E2c_mass[0,0].im", E2d[1], 4.0);
+  CHECK_VAL("E2c_mass[1,0].re", E2d[2], -3.0);
+  CHECK_VAL("E2c_mass[1,0].im", E2d[3], 0.0);
+  CHECK_VAL("E2c_mass[0,1].re", E2d[4], -2.0);
+  CHECK_VAL("E2c_mass[0,1].im", E2d[5], 0.0);
+  CHECK_VAL("E2c_mass[1,1].re", E2d[6], 5.0);
+  CHECK_VAL("E2c_mass[1,1].im", E2d[7], 6.0);
 
   /* Cleanup */
   SUNMatDestroy(rmem->M);

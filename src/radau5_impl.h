@@ -8,6 +8,10 @@
 #include "radau5.h"
 #include <sundials/sundials_types.h>
 
+#ifdef RADAU5_HAVE_KLU
+#include <klu.h>
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -49,13 +53,24 @@ typedef struct Radau5Mem_
   SUNMatrix E1;
   SUNLinearSolver LS_E1;
 
-  /* Realified complex systems E2 (2n×2n) — one per complex eigenvalue pair */
-  SUNMatrix E2[RADAU5_NPAIRS_MAX];
-  SUNLinearSolver LS_E2[RADAU5_NPAIRS_MAX];
+  /* Complex n×n E2 storage — direct solver (no SUNMatrix/SUNLinearSolver) */
+  double* E2c_data[RADAU5_NPAIRS_MAX];   /* n×n complex, double[2*n*n] or double[2*nnz] interleaved */
+  double* E2c_rhs[RADAU5_NPAIRS_MAX];    /* scratch for solve, double[2*n] */
+  sunrealtype e2c_omega[RADAU5_NPAIRS_MAX]; /* scaling ω = sqrt(-a01/a10) per pair */
+  int* E2c_ipiv[RADAU5_NPAIRS_MAX];      /* LAPACK pivot arrays, length n (dense/band) */
+
+  /* KLU complex handles for sparse E2 (always present for stable struct layout) */
+  void* E2c_Symbolic;                     /* klu_symbolic* (NULL if not sparse) */
+  void* E2c_Numeric[RADAU5_NPAIRS_MAX];   /* klu_numeric* per pair */
+  void* E2c_Common_ptr;                   /* klu_common* (heap-allocated, NULL if not sparse) */
+  sunindextype* E2c_colptrs;              /* n+1, CSC column pointers */
+  sunindextype* E2c_rowinds;              /* nnz, CSC row indices */
+  sunindextype  E2c_nnz;                  /* NNZ of the n×n complex pattern */
 
   /* Stage increments Z_i = Y_i - y
    * Ordering: z[0]=real eigenvalue, z[1],z[2]=complex pair 0, etc. */
   N_Vector z[RADAU5_NS_MAX];
+  N_Vector w[RADAU5_NS_MAX];
   /* Transformed stage increments in TI-space */
   N_Vector f[RADAU5_NS_MAX];
 
@@ -68,11 +83,6 @@ typedef struct Radau5Mem_
 
   /* Scratch vectors */
   N_Vector tmp1, tmp2, tmp3;
-
-  /* For realified complex solve (length 2n) — one per pair */
-  N_Vector rhs2[RADAU5_NPAIRS_MAX];
-  N_Vector sol2[RADAU5_NPAIRS_MAX];
-  N_Vector y2n[RADAU5_NPAIRS_MAX];
 
   /* DAE support */
   N_Vector id; /* differential/algebraic indicator (NULL if ODE) */
@@ -206,9 +216,10 @@ int radau5_DQJacDense(Radau5Mem rmem, sunrealtype t, N_Vector y, N_Vector fy);
 int radau5_DQJacBand(Radau5Mem rmem, sunrealtype t, N_Vector y, N_Vector fy);
 int radau5_DQJacSparse(Radau5Mem rmem, sunrealtype t, N_Vector y, N_Vector fy);
 int radau5_BuildE1(Radau5Mem rmem, sunrealtype fac1);
-int radau5_BuildE2(Radau5Mem rmem, int pair_idx, sunrealtype alphn, sunrealtype betan);
+int radau5_BuildE2c(Radau5Mem rmem, int pair_idx, sunrealtype alphn, sunrealtype betan);
 int radau5_DecompE1(Radau5Mem rmem);
-int radau5_DecompE2(Radau5Mem rmem, int pair_idx);
+int radau5_DecompE2c(Radau5Mem rmem, int pair_idx);
+int radau5_SolveE2c(Radau5Mem rmem, int pair_idx, sunrealtype* rhs_re, sunrealtype* rhs_im);
 int radau5_MassMult(Radau5Mem rmem, N_Vector x, N_Vector result);
 SUNMatrix radau5_SparseUnion(SUNMatrix A, SUNMatrix B, SUNContext sunctx);
 

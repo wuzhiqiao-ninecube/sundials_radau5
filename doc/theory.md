@@ -32,7 +32,7 @@ Three cases are supported:
   system is a DAE. RADAU5 supports DAEs of index up to 3, with the differential
   index communicated via `Radau5SetDAEIndex`. See [Section 8](#8-dae-support).
 
-The mass matrix $M$ may be dense or banded. It is evaluated once (or whenever the
+The mass matrix $M$ may be dense, banded or sparse. It is evaluated once (or whenever the
 user function is called) and held constant throughout the integration.
 
 ---
@@ -186,18 +186,18 @@ $$
 \left( \frac{\alpha + i\beta}{h} M - J \right) \delta_{2,3} = r_{2,3}.
 $$
 
-Since SUNDIALS has no complex matrix support, the complex system is realified
-into a $2n \times 2n$ real system:
+Since SUNDIALS has no complex matrix support, the complex system is solved
+directly using LAPACK (`zgetrf`/`zgetrs` for dense/band) or KLU (`klu_z_factor`/`klu_z_solve` for sparse), bypassing the SUNDIALS linear solver interface.
+
+The n×n complex matrix is:
 
 $$
-E_2 = \begin{pmatrix}
-\frac{\alpha}{h} M - J & -\frac{\beta}{h} M \\[4pt]
-\frac{\beta}{h} M & \frac{\alpha}{h} M - J
-\end{pmatrix}.
+K = \frac{\alpha + i\beta}{h} M - J.
 $$
 
-Note the antisymmetric structure of the off-diagonal blocks:
-the $(1,2)$ block is $-(\beta/h)M$ and the $(2,1)$ block is $+(\beta/h)M$.
+The right-hand side is packed as $d = r_{\text{re}} + i \cdot r_{\text{im}}$, and after solving $K z = d$, the solution is unpacked as $x_{\text{re}} = \text{Re}(z)$, $x_{\text{im}} = \text{Im}(z)$.
+
+For the eigenvalue mode, the scaling factor $\omega = 1$ (since $a_{01} = -\beta$, $a_{10} = \beta$).
 
 The eigenvector matrices $T$ and $T^{-1}$ (denoted `TI` in the code) are
 hardcoded constants transcribed from the Fortran source. The forward transform
@@ -257,18 +257,23 @@ $$
 
 This is identical to the eigenvalue mode $E_1$.
 
-2. The $2n \times 2n$ coupled system (from the $2 \times 2$ Schur block):
+2. The $n \times n$ complex system (from the $2 \times 2$ Schur block):
+
+The $2 \times 2$ block $\bigl(\begin{smallmatrix} a_{00} & a_{01} \\ a_{10} & a_{00} \end{smallmatrix}\bigr)$ with $a_{00} = T_{S,11}/h$, $a_{01} = T_{S,12}/h$, $a_{10} = T_{S,10}/h$ satisfies $a_{01} \cdot a_{10} < 0$. Define:
 
 $$
-E_2 = \begin{pmatrix}
-\frac{T_{S,11}}{h} M - J & \frac{T_{S,12}}{h} M \\[4pt]
-\frac{T_{S,10}}{h} M & \frac{T_{S,11}}{h} M - J
-\end{pmatrix}.
+\omega = \sqrt{-a_{01}/a_{10}}, \qquad \gamma = a_{00} + i \, \omega \, a_{10}.
 $$
 
-Note that the off-diagonal blocks are **not** antisymmetric: $T_{S,12} \neq -T_{S,10}$
-(numerically, $T_{S,12} \approx -8.42$ while $T_{S,10} \approx 1.10$). This is a
-key difference from the eigenvalue mode.
+The complex system is:
+
+$$
+K = \gamma \, M - J.
+$$
+
+The right-hand side is packed with $\omega$-scaling: $d = r_1 + i \, \omega \, r_2$. After solving $K z = d$, the solution is unpacked as $\delta F_1 = \text{Re}(z)$, $\delta F_2 = \text{Im}(z) / \omega$.
+
+Note that $T_{S,12} \neq -T_{S,10}$ (numerically, $T_{S,12} \approx -8.42$ while $T_{S,10} \approx 1.10$), so $\omega \neq 1$ in Schur mode. This is a key difference from the eigenvalue mode where $\omega = 1$.
 
 The solve proceeds by block back-substitution:
 
@@ -276,7 +281,7 @@ The solve proceeds by block back-substitution:
 2. Substitute $\delta F_3$ into the right-hand sides of the first two equations:
    $r_1 \leftarrow r_1 - (T_{S,13}/h) \, M \, \delta F_3$ and
    $r_2 \leftarrow r_2 - (T_{S,23}/h) \, M \, \delta F_3$.
-3. Solve $E_2 \, (\delta F_1; \delta F_2) = (r_1; r_2)$ (the $2n \times 2n$ system).
+3. Solve $K \, z = r_1 + i \, \omega \, r_2$ (the $n \times n$ complex system), unpack $\delta F_1$, $\delta F_2$.
 
 The Schur mode has the advantage that $U_S$ is orthogonal, which can improve
 numerical conditioning of the transforms compared to the potentially

@@ -105,11 +105,6 @@ void Radau5Free(void** radau5_mem)
   for (int k = 0; k <= RADAU5_NS_MAX; k++) {
     if (rmem->cont[k]) { N_VDestroy(rmem->cont[k]); rmem->cont[k] = NULL; }
   }
-  for (int k = 0; k < RADAU5_NPAIRS_MAX; k++) {
-    if (rmem->rhs2[k]) { N_VDestroy(rmem->rhs2[k]); rmem->rhs2[k] = NULL; }
-    if (rmem->sol2[k]) { N_VDestroy(rmem->sol2[k]); rmem->sol2[k] = NULL; }
-    if (rmem->y2n[k])  { N_VDestroy(rmem->y2n[k]);  rmem->y2n[k]  = NULL; }
-  }
   if (rmem->id)    { N_VDestroy(rmem->id);      rmem->id    = NULL; }
   if (rmem->rtol_v){ N_VDestroy(rmem->rtol_v); rmem->rtol_v = NULL; }
   if (rmem->atol_v){ N_VDestroy(rmem->atol_v); rmem->atol_v = NULL; }
@@ -120,15 +115,30 @@ void Radau5Free(void** radau5_mem)
   /* M is NOT owned by the solver — it's the user's matrix passed via SetMassFn */
   rmem->M = NULL;
   if (rmem->E1)     { SUNMatDestroy(rmem->E1);     rmem->E1     = NULL; }
+
   for (int k = 0; k < RADAU5_NPAIRS_MAX; k++) {
-    if (rmem->E2[k]) { SUNMatDestroy(rmem->E2[k]); rmem->E2[k] = NULL; }
+    if (rmem->E2c_data[k]) { free(rmem->E2c_data[k]); rmem->E2c_data[k] = NULL; }
+    if (rmem->E2c_rhs[k])  { free(rmem->E2c_rhs[k]);  rmem->E2c_rhs[k]  = NULL; }
+    if (rmem->E2c_ipiv[k]) { free(rmem->E2c_ipiv[k]); rmem->E2c_ipiv[k] = NULL; }
   }
+#ifdef RADAU5_HAVE_KLU
+  for (int k = 0; k < RADAU5_NPAIRS_MAX; k++) {
+    if (rmem->E2c_Numeric[k]) {
+      klu_free_numeric((klu_numeric**)&rmem->E2c_Numeric[k], (klu_common*)rmem->E2c_Common_ptr);
+      rmem->E2c_Numeric[k] = NULL;
+    }
+  }
+  if (rmem->E2c_Symbolic) {
+    klu_free_symbolic((klu_symbolic**)&rmem->E2c_Symbolic, (klu_common*)rmem->E2c_Common_ptr);
+    rmem->E2c_Symbolic = NULL;
+  }
+  if (rmem->E2c_Common_ptr) { free(rmem->E2c_Common_ptr); rmem->E2c_Common_ptr = NULL; }
+  if (rmem->E2c_colptrs) { free(rmem->E2c_colptrs); rmem->E2c_colptrs = NULL; }
+  if (rmem->E2c_rowinds) { free(rmem->E2c_rowinds); rmem->E2c_rowinds = NULL; }
+#endif
 
   /* SUNLinearSolvers */
   if (rmem->LS_E1) { SUNLinSolFree(rmem->LS_E1); rmem->LS_E1 = NULL; }
-  for (int k = 0; k < RADAU5_NPAIRS_MAX; k++) {
-    if (rmem->LS_E2[k]) { SUNLinSolFree(rmem->LS_E2[k]); rmem->LS_E2[k] = NULL; }
-  }
 
   /* Column grouping data */
   if (rmem->col_group)     { free(rmem->col_group);     rmem->col_group     = NULL; }
@@ -171,6 +181,7 @@ int Radau5Init(void* radau5_mem, Radau5RhsFn rhs, sunrealtype t0, N_Vector y0)
   rmem->fn    = N_VClone(y0); if (!rmem->fn)    return RADAU5_MEM_FAIL;
   for (int k = 0; k < RADAU5_NS_MAX; k++) {
     rmem->z[k] = N_VClone(y0); if (!rmem->z[k]) return RADAU5_MEM_FAIL;
+    rmem->w[k] = N_VClone(y0); if (!rmem->w[k]) return RADAU5_MEM_FAIL;
     rmem->f[k] = N_VClone(y0); if (!rmem->f[k]) return RADAU5_MEM_FAIL;
   }
   rmem->scal  = N_VClone(y0); if (!rmem->scal)  return RADAU5_MEM_FAIL;
@@ -245,36 +256,24 @@ int Radau5SetLinearSolver(void* radau5_mem, SUNMatrix J, SUNMatrix M)
     rmem->E1 = SUNDenseMatrix(n, n, rmem->sunctx);
     if (!rmem->E1) return RADAU5_MEM_FAIL;
 
-    /* E2: 2n×2n dense, one per complex pair.
-     * For variable-order support, allocate up to RADAU5_NPAIRS_MAX pairs. */
+    /* Complex E2: n×n complex (LAPACK zgetrf/zgetrs) */
     for (int pk = 0; pk < RADAU5_NPAIRS_MAX; pk++) {
-      rmem->E2[pk] = SUNDenseMatrix(2 * n, 2 * n, rmem->sunctx);
-      if (!rmem->E2[pk]) return RADAU5_MEM_FAIL;
-      rmem->y2n[pk] = N_VNew_Serial(2 * n, rmem->sunctx);
-      if (!rmem->y2n[pk]) return RADAU5_MEM_FAIL;
-      rmem->rhs2[pk] = N_VNew_Serial(2 * n, rmem->sunctx);
-      if (!rmem->rhs2[pk]) return RADAU5_MEM_FAIL;
-      rmem->sol2[pk] = N_VNew_Serial(2 * n, rmem->sunctx);
-      if (!rmem->sol2[pk]) return RADAU5_MEM_FAIL;
+      rmem->E2c_data[pk] = (double*)calloc((size_t)(2 * n * n), sizeof(double));
+      if (!rmem->E2c_data[pk]) return RADAU5_MEM_FAIL;
+      rmem->E2c_rhs[pk] = (double*)malloc((size_t)(2 * n) * sizeof(double));
+      if (!rmem->E2c_rhs[pk]) return RADAU5_MEM_FAIL;
+      rmem->E2c_ipiv[pk] = (int*)malloc((size_t)n * sizeof(int));
+      if (!rmem->E2c_ipiv[pk]) return RADAU5_MEM_FAIL;
+      rmem->e2c_omega[pk] = SUN_RCONST(1.0);
     }
 
-    /* Linear solvers */
+    /* Linear solver for E1 only */
     rmem->LS_E1 = SUNLinSol_Dense(rmem->ycur, rmem->E1, rmem->sunctx);
     if (!rmem->LS_E1) return RADAU5_MEM_FAIL;
 
-    for (int pk = 0; pk < RADAU5_NPAIRS_MAX; pk++) {
-      rmem->LS_E2[pk] = SUNLinSol_Dense(rmem->y2n[pk], rmem->E2[pk], rmem->sunctx);
-      if (!rmem->LS_E2[pk]) return RADAU5_MEM_FAIL;
-    }
-
-    /* Initialize linear solvers */
     int ret;
     ret = SUNLinSolInitialize(rmem->LS_E1);
     if (ret != 0) return RADAU5_LSETUP_FAIL;
-    for (int pk = 0; pk < RADAU5_NPAIRS_MAX; pk++) {
-      ret = SUNLinSolInitialize(rmem->LS_E2[pk]);
-      if (ret != 0) return RADAU5_LSETUP_FAIL;
-    }
 
   } else if (mid == SUNMATRIX_BAND) {
     sunindextype n = rmem->n;
@@ -296,34 +295,24 @@ int Radau5SetLinearSolver(void* radau5_mem, SUNMatrix J, SUNMatrix M)
 
     /* E2: 2n×2n dense — the off-diagonal blocks at offset n make
        the effective bandwidth ~n, so band storage is not beneficial.
-       Allocate all RADAU5_NPAIRS_MAX for variable-order support. */
+       Use complex n×n path with LAPACK zgetrf/zgetrs. */
     for (int pk = 0; pk < RADAU5_NPAIRS_MAX; pk++) {
-      rmem->E2[pk] = SUNDenseMatrix(2 * n, 2 * n, rmem->sunctx);
-      if (!rmem->E2[pk]) return RADAU5_MEM_FAIL;
-      rmem->y2n[pk] = N_VNew_Serial(2 * n, rmem->sunctx);
-      if (!rmem->y2n[pk]) return RADAU5_MEM_FAIL;
-      rmem->rhs2[pk] = N_VNew_Serial(2 * n, rmem->sunctx);
-      if (!rmem->rhs2[pk]) return RADAU5_MEM_FAIL;
-      rmem->sol2[pk] = N_VNew_Serial(2 * n, rmem->sunctx);
-      if (!rmem->sol2[pk]) return RADAU5_MEM_FAIL;
+      rmem->E2c_data[pk] = (double*)calloc((size_t)(2 * n * n), sizeof(double));
+      if (!rmem->E2c_data[pk]) return RADAU5_MEM_FAIL;
+      rmem->E2c_rhs[pk] = (double*)malloc((size_t)(2 * n) * sizeof(double));
+      if (!rmem->E2c_rhs[pk]) return RADAU5_MEM_FAIL;
+      rmem->E2c_ipiv[pk] = (int*)malloc((size_t)n * sizeof(int));
+      if (!rmem->E2c_ipiv[pk]) return RADAU5_MEM_FAIL;
+      rmem->e2c_omega[pk] = SUN_RCONST(1.0);
     }
 
-    /* Linear solvers: band for E1, dense for E2 */
+    /* Linear solvers: band for E1 only */
     rmem->LS_E1 = SUNLinSol_Band(rmem->ycur, rmem->E1, rmem->sunctx);
     if (!rmem->LS_E1) return RADAU5_MEM_FAIL;
-
-    for (int pk = 0; pk < RADAU5_NPAIRS_MAX; pk++) {
-      rmem->LS_E2[pk] = SUNLinSol_Dense(rmem->y2n[pk], rmem->E2[pk], rmem->sunctx);
-      if (!rmem->LS_E2[pk]) return RADAU5_MEM_FAIL;
-    }
 
     int ret;
     ret = SUNLinSolInitialize(rmem->LS_E1);
     if (ret != 0) return RADAU5_LSETUP_FAIL;
-    for (int pk = 0; pk < RADAU5_NPAIRS_MAX; pk++) {
-      ret = SUNLinSolInitialize(rmem->LS_E2[pk]);
-      if (ret != 0) return RADAU5_LSETUP_FAIL;
-    }
 
   } else if (mid == SUNMATRIX_SPARSE) {
     sunindextype n = rmem->n;
@@ -342,51 +331,73 @@ int Radau5SetLinearSolver(void* radau5_mem, SUNMatrix J, SUNMatrix M)
 
     /* E1 and E2 allocation: if M is also sparse, use union(J,M) pattern
        immediately; otherwise use J's pattern alone. */
-    sunindextype nnz_E2;
     if (M != NULL && SUNMatGetID(M) == SUNMATRIX_SPARSE) {
       /* E1: union(J, M) pattern */
       rmem->E1 = radau5_SparseUnion(J, M, rmem->sunctx);
       if (!rmem->E1) return RADAU5_MEM_FAIL;
 
       sunindextype nnz_union = SM_INDEXPTRS_S(rmem->E1)[n];
-      sunindextype nnz_M = SM_INDEXPTRS_S(M)[n];
-      nnz_E2 = 2 * nnz_union + 2 * nnz_M;
     } else {
       /* E1: same structure as J */
       rmem->E1 = SUNMatClone(J);
       if (!rmem->E1) return RADAU5_MEM_FAIL;
       SUNMatCopy(J, rmem->E1);  /* copy structure; values will be overwritten */
-
-      nnz_E2 = 2 * nnz_J + 4 * n;  /* 2 diagonal blocks + 2 off-diag identity blocks */
     }
 
-    /* E2: 2n×2n sparse CSC — allocate RADAU5_NPAIRS_MAX for variable-order. */
-    for (int pk = 0; pk < RADAU5_NPAIRS_MAX; pk++) {
-      rmem->E2[pk] = SUNSparseMatrix(2 * n, 2 * n, nnz_E2, CSC_MAT, rmem->sunctx);
-      if (!rmem->E2[pk]) return RADAU5_MEM_FAIL;
-      rmem->y2n[pk]  = N_VNew_Serial(2 * n, rmem->sunctx);
-      if (!rmem->y2n[pk]) return RADAU5_MEM_FAIL;
-      rmem->rhs2[pk] = N_VNew_Serial(2 * n, rmem->sunctx);
-      if (!rmem->rhs2[pk]) return RADAU5_MEM_FAIL;
-      rmem->sol2[pk] = N_VNew_Serial(2 * n, rmem->sunctx);
-      if (!rmem->sol2[pk]) return RADAU5_MEM_FAIL;
+    /* E2: n×n complex sparse — use KLU klu_z_factor/klu_z_solve directly.
+       The sparsity pattern is the same as E1 (union of J and M, or just J). */
+    {
+      sunindextype nnz_e2c;
+      sunindextype *pat_p, *pat_i;
+
+      if (M != NULL && SUNMatGetID(M) == SUNMATRIX_SPARSE) {
+        /* Use E1's union pattern */
+        pat_p = SM_INDEXPTRS_S(rmem->E1);
+        pat_i = SM_INDEXVALS_S(rmem->E1);
+        nnz_e2c = pat_p[n];
+      } else {
+        /* Use J's pattern */
+        pat_p = SM_INDEXPTRS_S(J);
+        pat_i = SM_INDEXVALS_S(J);
+        nnz_e2c = nnz_J;
+      }
+
+      /* Copy CSC pattern for KLU complex calls */
+      rmem->E2c_colptrs = (sunindextype*)malloc((size_t)(n + 1) * sizeof(sunindextype));
+      if (!rmem->E2c_colptrs) return RADAU5_MEM_FAIL;
+      rmem->E2c_rowinds = (sunindextype*)malloc((size_t)nnz_e2c * sizeof(sunindextype));
+      if (!rmem->E2c_rowinds) return RADAU5_MEM_FAIL;
+      memcpy(rmem->E2c_colptrs, pat_p, (size_t)(n + 1) * sizeof(sunindextype));
+      memcpy(rmem->E2c_rowinds, pat_i, (size_t)nnz_e2c * sizeof(sunindextype));
+      rmem->E2c_nnz = nnz_e2c;
+
+      /* KLU symbolic analysis (shared across all pairs) */
+      rmem->E2c_Common_ptr = malloc(sizeof(klu_common));
+      if (!rmem->E2c_Common_ptr) return RADAU5_MEM_FAIL;
+      klu_defaults((klu_common*)rmem->E2c_Common_ptr);
+      rmem->E2c_Symbolic = klu_analyze(
+        (int)n, (int*)rmem->E2c_colptrs, (int*)rmem->E2c_rowinds,
+        (klu_common*)rmem->E2c_Common_ptr);
+      if (!rmem->E2c_Symbolic) return RADAU5_MEM_FAIL;
+
+      /* Allocate complex data arrays and scratch */
+      for (int pk = 0; pk < RADAU5_NPAIRS_MAX; pk++) {
+        rmem->E2c_data[pk] = (double*)calloc((size_t)(2 * nnz_e2c), sizeof(double));
+        if (!rmem->E2c_data[pk]) return RADAU5_MEM_FAIL;
+        rmem->E2c_rhs[pk] = (double*)malloc((size_t)(2 * n) * sizeof(double));
+        if (!rmem->E2c_rhs[pk]) return RADAU5_MEM_FAIL;
+        rmem->E2c_Numeric[pk] = NULL;
+        rmem->e2c_omega[pk] = SUN_RCONST(1.0);
+      }
     }
 
-    /* KLU solvers */
+    /* KLU solver for E1 only */
     rmem->LS_E1 = SUNLinSol_KLU(rmem->ycur, rmem->E1, rmem->sunctx);
     if (!rmem->LS_E1) return RADAU5_MEM_FAIL;
-    for (int pk = 0; pk < RADAU5_NPAIRS_MAX; pk++) {
-      rmem->LS_E2[pk] = SUNLinSol_KLU(rmem->y2n[pk], rmem->E2[pk], rmem->sunctx);
-      if (!rmem->LS_E2[pk]) return RADAU5_MEM_FAIL;
-    }
 
     int ret;
     ret = SUNLinSolInitialize(rmem->LS_E1);
     if (ret != 0) return RADAU5_LSETUP_FAIL;
-    for (int pk = 0; pk < RADAU5_NPAIRS_MAX; pk++) {
-      ret = SUNLinSolInitialize(rmem->LS_E2[pk]);
-      if (ret != 0) return RADAU5_LSETUP_FAIL;
-    }
 
   } else {
     return RADAU5_ILL_INPUT;
