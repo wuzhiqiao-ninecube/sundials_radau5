@@ -170,8 +170,10 @@ typedef struct Radau5Mem_
   sunrealtype xsol, xold, hsol;
 
   /* Matrix type info */
-  SUNMatrix_ID mat_id;
-  sunindextype mu, ml; /* band widths (if band matrix) */
+  SUNMatrix_ID mat_id;  /* E1/E2 storage format (may differ from J's type if promoted) */
+  SUNMatrix_ID jac_id;  /* actual J matrix format (for reading J in BuildE1/E2c) */
+  sunindextype mu, ml;  /* band widths: max of J and M (if band matrix) */
+  sunindextype E2c_ldab; /* leading dim for complex band E2: 2*ml+mu+1 (0 if dense) */
 
   /* Column grouping for sparse DQ Jacobian */
   sunindextype* col_group;       /* length n: group number for each column, -1 = all-zero */

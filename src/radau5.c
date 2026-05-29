@@ -240,6 +240,12 @@ int Radau5SetLinearSolver(void* radau5_mem, SUNMatrix J, SUNMatrix M)
   if (!J) return RADAU5_ILL_INPUT;
 
   SUNMatrix_ID mid = SUNMatGetID(J);
+  rmem->jac_id = mid;
+
+  /* If J is band but M is dense, E1/E2 = fac1*M - J becomes dense → promote */
+  if (mid == SUNMATRIX_BAND && M != NULL && SUNMatGetID(M) == SUNMATRIX_DENSE) {
+    mid = SUNMATRIX_DENSE;
+  }
   rmem->mat_id = mid;
 
   if (mid == SUNMATRIX_DENSE) {
@@ -257,6 +263,7 @@ int Radau5SetLinearSolver(void* radau5_mem, SUNMatrix J, SUNMatrix M)
     if (!rmem->E1) return RADAU5_MEM_FAIL;
 
     /* Complex E2: n×n complex (LAPACK zgetrf/zgetrs) */
+    rmem->E2c_ldab = 0;  /* dense path: not used */
     for (int pk = 0; pk < RADAU5_NPAIRS_MAX; pk++) {
       rmem->E2c_data[pk] = (double*)calloc((size_t)(2 * n * n), sizeof(double));
       if (!rmem->E2c_data[pk]) return RADAU5_MEM_FAIL;
@@ -278,9 +285,16 @@ int Radau5SetLinearSolver(void* radau5_mem, SUNMatrix J, SUNMatrix M)
   } else if (mid == SUNMATRIX_BAND) {
     sunindextype n = rmem->n;
 
-    /* Extract bandwidths */
-    rmem->mu = SM_UBAND_B(J);
-    rmem->ml = SM_LBAND_B(J);
+    /* Bandwidths: max of J and M */
+    sunindextype mu_J = SM_UBAND_B(J);
+    sunindextype ml_J = SM_LBAND_B(J);
+    sunindextype mu_M = 0, ml_M = 0;
+    if (M != NULL && SUNMatGetID(M) == SUNMATRIX_BAND) {
+      mu_M = SM_UBAND_B(M);
+      ml_M = SM_LBAND_B(M);
+    }
+    rmem->mu = SUNMAX(mu_J, mu_M);
+    rmem->ml = SUNMAX(ml_J, ml_M);
 
     /* Clone J for internal Jacobian storage */
     rmem->J = SUNMatClone(J);
@@ -289,15 +303,16 @@ int Radau5SetLinearSolver(void* radau5_mem, SUNMatrix J, SUNMatrix M)
     rmem->Jsaved = SUNMatClone(J);
     if (!rmem->Jsaved) return RADAU5_MEM_FAIL;
 
-    /* E1: n×n band (SUNBandMatrix auto-sets s_mu = mu+ml for LU fill) */
+    /* E1: n×n band with combined bandwidth (SUNBandMatrix auto-sets s_mu = mu+ml for LU fill) */
     rmem->E1 = SUNBandMatrix(n, rmem->mu, rmem->ml, rmem->sunctx);
     if (!rmem->E1) return RADAU5_MEM_FAIL;
 
-    /* E2: 2n×2n dense — the off-diagonal blocks at offset n make
-       the effective bandwidth ~n, so band storage is not beneficial.
-       Use complex n×n path with LAPACK zgetrf/zgetrs. */
+    /* E2: n×n complex band (LAPACK zgbtrf/zgbtrs)
+       ldab = 2*ml + mu + 1 for LU fill-in */
+    sunindextype ldab = 2 * rmem->ml + rmem->mu + 1;
+    rmem->E2c_ldab = ldab;
     for (int pk = 0; pk < RADAU5_NPAIRS_MAX; pk++) {
-      rmem->E2c_data[pk] = (double*)calloc((size_t)(2 * n * n), sizeof(double));
+      rmem->E2c_data[pk] = (double*)calloc((size_t)(2 * ldab * n), sizeof(double));
       if (!rmem->E2c_data[pk]) return RADAU5_MEM_FAIL;
       rmem->E2c_rhs[pk] = (double*)malloc((size_t)(2 * n) * sizeof(double));
       if (!rmem->E2c_rhs[pk]) return RADAU5_MEM_FAIL;
@@ -306,12 +321,11 @@ int Radau5SetLinearSolver(void* radau5_mem, SUNMatrix J, SUNMatrix M)
       rmem->e2c_omega[pk] = SUN_RCONST(1.0);
     }
 
-    /* Linear solvers: band for E1 only */
+    /* Linear solver: band for E1 */
     rmem->LS_E1 = SUNLinSol_Band(rmem->ycur, rmem->E1, rmem->sunctx);
     if (!rmem->LS_E1) return RADAU5_MEM_FAIL;
 
-    int ret;
-    ret = SUNLinSolInitialize(rmem->LS_E1);
+    int ret = SUNLinSolInitialize(rmem->LS_E1);
     if (ret != 0) return RADAU5_LSETUP_FAIL;
 
   } else if (mid == SUNMATRIX_SPARSE) {

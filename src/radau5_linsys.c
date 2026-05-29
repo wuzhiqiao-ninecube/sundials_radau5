@@ -821,8 +821,8 @@ int radau5_DQJacBand(Radau5Mem rmem, sunrealtype t, N_Vector y, N_Vector fy)
 
   n    = rmem->n;
   J    = rmem->J;
-  mu   = rmem->mu;
-  ml   = rmem->ml;
+  mu   = SM_UBAND_B(J);  /* Use J's actual bandwidth, not E1's combined bandwidth */
+  ml   = SM_LBAND_B(J);
   srur = SUNRsqrt(SUN_UNIT_ROUNDOFF);
 
   fnorm  = N_VWrmsNorm(fy, rmem->scal);
@@ -1072,47 +1072,68 @@ int radau5_BuildE1(Radau5Mem rmem, sunrealtype fac1)
     sunindextype ml = rmem->ml;
     sunindextype i1, i2;
 
+    /* J's actual bandwidth (may be narrower than E1's) */
+    sunindextype mu_J = SM_UBAND_B(J);
+    sunindextype ml_J = SM_LBAND_B(J);
+
+    /* Cache M's type and bandwidth outside the loop */
+    int m_is_band = (M != NULL && SUNMatGetID(M) == SUNMATRIX_BAND);
+    sunindextype muM = m_is_band ? SM_UBAND_B(M) : 0;
+    sunindextype mlM = m_is_band ? SM_LBAND_B(M) : 0;
+
     SUNMatZero(E1);
 
     for (j = 0; j < n; j++)
     {
       i1 = SUNMAX(0, j - mu);
       i2 = SUNMIN(j + ml, n - 1);
-      for (i = i1; i <= i2; i++)
+
+      /* Copy -J within J's band */
+      sunindextype j1 = SUNMAX(0, j - mu_J);
+      sunindextype j2 = SUNMIN(j + ml_J, n - 1);
+      for (i = j1; i <= j2; i++)
         SM_ELEMENT_B(E1, i, j) = -SM_ELEMENT_B(J, i, j);
 
       if (M == NULL)
       {
         SM_ELEMENT_B(E1, j, j) += fac1;
       }
+      else if (m_is_band)
+      {
+        sunindextype im1 = SUNMAX(0, j - muM);
+        sunindextype im2 = SUNMIN(j + mlM, n - 1);
+        for (i = im1; i <= im2; i++)
+          SM_ELEMENT_B(E1, i, j) += fac1 * SM_ELEMENT_B(M, i, j);
+      }
       else
       {
-        /* M may be band or dense — check its type */
-        if (SUNMatGetID(M) == SUNMATRIX_BAND)
-        {
-          sunindextype muM = SM_UBAND_B(M);
-          sunindextype mlM = SM_LBAND_B(M);
-          sunindextype im1 = SUNMAX(0, j - muM);
-          sunindextype im2 = SUNMIN(j + mlM, n - 1);
-          for (i = im1; i <= im2; i++)
-            SM_ELEMENT_B(E1, i, j) += fac1 * SM_ELEMENT_B(M, i, j);
-        }
-        else
-        {
-          /* Dense M with band E1 — only copy within band */
-          for (i = i1; i <= i2; i++)
-            SM_ELEMENT_B(E1, i, j) += fac1 * SM_ELEMENT_D(M, i, j);
-        }
+        /* Dense M with band E1 — only copy within E1's band */
+        for (i = i1; i <= i2; i++)
+          SM_ELEMENT_B(E1, i, j) += fac1 * SM_ELEMENT_D(M, i, j);
       }
     }
   }
   else
   {
     /* --- Dense case --- */
+    /* J may be band (promoted due to dense M) or dense */
+    int j_is_band = (rmem->jac_id == SUNMATRIX_BAND);
+    sunindextype mu_J = j_is_band ? SM_UBAND_B(J) : 0;
+    sunindextype ml_J = j_is_band ? SM_LBAND_B(J) : 0;
+
+    if (j_is_band) SUNMatZero(E1);
+
     for (j = 0; j < n; j++)
     {
-      for (i = 0; i < n; i++)
-        SM_ELEMENT_D(E1, i, j) = -SM_ELEMENT_D(J, i, j);
+      if (j_is_band) {
+        sunindextype j1 = SUNMAX(0, j - mu_J);
+        sunindextype j2 = SUNMIN(j + ml_J, n - 1);
+        for (i = j1; i <= j2; i++)
+          SM_ELEMENT_D(E1, i, j) = -SM_ELEMENT_B(J, i, j);
+      } else {
+        for (i = 0; i < n; i++)
+          SM_ELEMENT_D(E1, i, j) = -SM_ELEMENT_D(J, i, j);
+      }
 
       if (M == NULL)
       {
@@ -1226,11 +1247,61 @@ int radau5_BuildE2c(Radau5Mem rmem, int pair_idx, sunrealtype alphn, sunrealtype
   }
 #endif
 
-  /* Dense / Band case: column-major interleaved */
+  /* Band case: LAPACK zgbtrf band storage format */
+  if (rmem->mat_id == SUNMATRIX_BAND)
   {
-    int j_is_band = (rmem->mat_id == SUNMATRIX_BAND);
     sunindextype mu = rmem->mu;
     sunindextype ml = rmem->ml;
+    sunindextype ldab = rmem->E2c_ldab;
+    int j_is_band = (rmem->jac_id == SUNMATRIX_BAND);
+    sunindextype mu_J = j_is_band ? SM_UBAND_B(J) : 0;
+    sunindextype ml_J = j_is_band ? SM_LBAND_B(J) : 0;
+    int m_is_band = (M != NULL && SUNMatGetID(M) == SUNMATRIX_BAND);
+    sunindextype muM = m_is_band ? SM_UBAND_B(M) : 0;
+    sunindextype mlM = m_is_band ? SM_LBAND_B(M) : 0;
+
+    memset(E2d, 0, (size_t)(2 * ldab * n) * sizeof(double));
+
+    for (j = 0; j < n; j++)
+    {
+      sunindextype i1 = SUNMAX(0, j - mu);
+      sunindextype i2 = SUNMIN(n - 1, j + ml);
+      for (i = i1; i <= i2; i++)
+      {
+        /* Read J(i,j) */
+        if (j_is_band)
+          jij = (i >= j - mu_J && i <= j + ml_J) ? SM_ELEMENT_B(J, i, j)
+                                                   : SUN_RCONST(0.0);
+        else
+          jij = SM_ELEMENT_D(J, i, j);
+
+        /* Read M(i,j) */
+        if (M == NULL)
+          mij = (i == j) ? SUN_RCONST(1.0) : SUN_RCONST(0.0);
+        else if (m_is_band)
+          mij = (i >= j - muM && i <= j + mlM) ? SM_ELEMENT_B(M, i, j)
+                                                 : SUN_RCONST(0.0);
+        else
+          mij = SM_ELEMENT_D(M, i, j);
+
+        /* LAPACK band storage: row = kl + ku + i - j, column = j */
+        sunindextype row = ml + mu + i - j;
+        sunindextype idx = 2 * (row + j * ldab);
+        E2d[idx]     = gamma_re * mij - jij;
+        E2d[idx + 1] = gamma_im * mij;
+      }
+    }
+    return RADAU5_SUCCESS;
+  }
+
+  /* Dense case: column-major interleaved */
+  {
+    int j_is_band = (rmem->jac_id == SUNMATRIX_BAND);
+    sunindextype mu_J = j_is_band ? SM_UBAND_B(J) : 0;
+    sunindextype ml_J = j_is_band ? SM_LBAND_B(J) : 0;
+    int m_is_band = (M != NULL && SUNMatGetID(M) == SUNMATRIX_BAND);
+    sunindextype muM = m_is_band ? SM_UBAND_B(M) : 0;
+    sunindextype mlM = m_is_band ? SM_LBAND_B(M) : 0;
 
     for (j = 0; j < n; j++)
     {
@@ -1238,29 +1309,20 @@ int radau5_BuildE2c(Radau5Mem rmem, int pair_idx, sunrealtype alphn, sunrealtype
       {
         /* Read J(i,j) */
         if (j_is_band)
-          jij = (i >= j - mu && i <= j + ml) ? SM_ELEMENT_B(J, i, j)
-                                              : SUN_RCONST(0.0);
+          jij = (i >= j - mu_J && i <= j + ml_J) ? SM_ELEMENT_B(J, i, j)
+                                                   : SUN_RCONST(0.0);
         else
           jij = SM_ELEMENT_D(J, i, j);
 
         /* Read M(i,j) or identity */
         if (M == NULL)
-        {
           mij = (i == j) ? SUN_RCONST(1.0) : SUN_RCONST(0.0);
-        }
-        else if (SUNMatGetID(M) == SUNMATRIX_BAND)
-        {
-          sunindextype muM = SM_UBAND_B(M);
-          sunindextype mlM = SM_LBAND_B(M);
+        else if (m_is_band)
           mij = (i >= j - muM && i <= j + mlM) ? SM_ELEMENT_B(M, i, j)
                                                  : SUN_RCONST(0.0);
-        }
         else
-        {
           mij = SM_ELEMENT_D(M, i, j);
-        }
 
-        /* E2c[i + j*n] = (gamma_re + i*gamma_im)*mij - jij */
         sunindextype idx = 2 * (i + j * n);
         E2d[idx]     = gamma_re * mij - jij;
         E2d[idx + 1] = gamma_im * mij;
@@ -1282,6 +1344,11 @@ int radau5_BuildE2c(Radau5Mem rmem, int pair_idx, sunrealtype alphn, sunrealtype
 extern void zgetrf_(int* m, int* n, double* A, int* lda, int* ipiv, int* info);
 extern void zgetrs_(char* trans, int* n, int* nrhs, double* A, int* lda,
                     int* ipiv, double* B, int* ldb, int* info);
+extern void zgbtrf_(int* m, int* n, int* kl, int* ku, double* AB, int* ldab,
+                    int* ipiv, int* info);
+extern void zgbtrs_(char* trans, int* n, int* kl, int* ku, int* nrhs,
+                    double* AB, int* ldab, int* ipiv, double* B, int* ldb,
+                    int* info);
 
 int radau5_DecompE2c(Radau5Mem rmem, int pair_idx)
 {
@@ -1310,7 +1377,20 @@ int radau5_DecompE2c(Radau5Mem rmem, int pair_idx)
   }
 #endif
 
-  /* Dense/Band: LAPACK zgetrf */
+  /* Dense/Band: LAPACK zgetrf / zgbtrf */
+  if (rmem->mat_id == SUNMATRIX_BAND)
+  {
+    int N = (int)rmem->n;
+    int KL = (int)rmem->ml;
+    int KU = (int)rmem->mu;
+    int LDAB = (int)rmem->E2c_ldab;
+    int info;
+    zgbtrf_(&N, &N, &KL, &KU, rmem->E2c_data[pair_idx], &LDAB,
+            rmem->E2c_ipiv[pair_idx], &info);
+    return (info == 0) ? RADAU5_SUCCESS : RADAU5_SINGULAR_MATRIX;
+  }
+
+  /* Dense: LAPACK zgetrf */
   {
     int N = (int)rmem->n;
     int info;
@@ -1354,8 +1434,18 @@ int radau5_SolveE2c(Radau5Mem rmem, int pair_idx,
   }
   else
 #endif
+  if (rmem->mat_id == SUNMATRIX_BAND)
   {
-    /* LAPACK zgetrs */
+    int N = (int)n, KL = (int)rmem->ml, KU = (int)rmem->mu;
+    int LDAB = (int)rmem->E2c_ldab;
+    int nrhs = 1, info;
+    char trans = 'N';
+    zgbtrs_(&trans, &N, &KL, &KU, &nrhs, rmem->E2c_data[pair_idx], &LDAB,
+            rmem->E2c_ipiv[pair_idx], work, &N, &info);
+  }
+  else
+  {
+    /* Dense: LAPACK zgetrs */
     int N = (int)n, nrhs = 1, info;
     char trans = 'N';
     zgetrs_(&trans, &N, &nrhs, rmem->E2c_data[pair_idx], &N,

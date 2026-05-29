@@ -89,7 +89,7 @@ label10:
   }
   else
   {
-    if (rmem->mat_id == SUNMATRIX_SPARSE)
+    if (rmem->jac_id == SUNMATRIX_SPARSE)
     {
       if (rmem->sp_colptrs == NULL)
         return RADAU5_ILL_INPUT;  /* sparse requires analytic Jac or sparsity pattern */
@@ -97,7 +97,7 @@ label10:
       if (ret == RADAU5_RHSFUNC_RECVR) goto label78;
       if (ret != RADAU5_SUCCESS) return ret;
     }
-    else if (rmem->mat_id == SUNMATRIX_BAND)
+    else if (rmem->jac_id == SUNMATRIX_BAND)
       ret = radau5_DQJacBand(rmem, rmem->tn, rmem->ycur, rmem->fn);
     else
       ret = radau5_DQJacDense(rmem, rmem->tn, rmem->ycur, rmem->fn);
