@@ -8,6 +8,14 @@
 #include "radau5.h"
 #include <sundials/sundials_types.h>
 
+#include "nvector/complex_serial/nvector_complex_serial.h"
+#include "sunmatrix/complex_dense/sunmatrix_complex_dense.h"
+#include "sunmatrix/complex_band/sunmatrix_complex_band.h"
+#include "sunmatrix/complex_sparse/sunmatrix_complex_sparse.h"
+#include "sunlinsol/complex_dense/sunlinsol_complex_dense.h"
+#include "sunlinsol/complex_band/sunlinsol_complex_band.h"
+#include "sunlinsol/complex_sparse/sunlinsol_complex_sparse.h"
+
 #ifdef RADAU5_HAVE_KLU
 #include <klu.h>
 #endif
@@ -53,19 +61,12 @@ typedef struct Radau5Mem_
   SUNMatrix E1;
   SUNLinearSolver LS_E1;
 
-  /* Complex n×n E2 storage — direct solver (no SUNMatrix/SUNLinearSolver) */
-  double* E2c_data[RADAU5_NPAIRS_MAX];   /* n×n complex, double[2*n*n] or double[2*nnz] interleaved */
-  double* E2c_rhs[RADAU5_NPAIRS_MAX];    /* scratch for solve, double[2*n] */
-  sunrealtype e2c_omega[RADAU5_NPAIRS_MAX]; /* scaling ω = sqrt(-a01/a10) per pair */
-  int* E2c_ipiv[RADAU5_NPAIRS_MAX];      /* LAPACK pivot arrays, length n (dense/band) */
-
-  /* KLU complex handles for sparse E2 (always present for stable struct layout) */
-  void* E2c_Symbolic;                     /* klu_symbolic* (NULL if not sparse) */
-  void* E2c_Numeric[RADAU5_NPAIRS_MAX];   /* klu_numeric* per pair */
-  void* E2c_Common_ptr;                   /* klu_common* (heap-allocated, NULL if not sparse) */
-  sunindextype* E2c_colptrs;              /* n+1, CSC column pointers */
-  sunindextype* E2c_rowinds;              /* nnz, CSC row indices */
-  sunindextype  E2c_nnz;                  /* NNZ of the n×n complex pattern */
+  /* Complex n×n E2 storage — via SUNDIALS complex modules */
+  SUNMatrix E2c_mat[RADAU5_NPAIRS_MAX];          /* ComplexDense/Band/Sparse */
+  SUNLinearSolver E2c_LS[RADAU5_NPAIRS_MAX];     /* ComplexDense/Band/Sparse solver */
+  N_Vector E2c_rhs_vec[RADAU5_NPAIRS_MAX];       /* ComplexSerial RHS vector */
+  N_Vector E2c_sol_vec[RADAU5_NPAIRS_MAX];       /* ComplexSerial solution vector */
+  sunrealtype e2c_omega[RADAU5_NPAIRS_MAX];      /* scaling ω = sqrt(-a01/a10) per pair */
 
   /* Stage increments Z_i = Y_i - y
    * Ordering: z[0]=real eigenvalue, z[1],z[2]=complex pair 0, etc. */
@@ -173,7 +174,6 @@ typedef struct Radau5Mem_
   SUNMatrix_ID mat_id;  /* E1/E2 storage format (may differ from J's type if promoted) */
   SUNMatrix_ID jac_id;  /* actual J matrix format (for reading J in BuildE1/E2c) */
   sunindextype mu, ml;  /* band widths: max of J and M (if band matrix) */
-  sunindextype E2c_ldab; /* leading dim for complex band E2: 2*ml+mu+1 (0 if dense) */
 
   /* Column grouping for sparse DQ Jacobian */
   sunindextype* col_group;       /* length n: group number for each column, -1 = all-zero */

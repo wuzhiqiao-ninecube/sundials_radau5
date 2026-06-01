@@ -7,11 +7,12 @@
  *   radau5_BuildE1        — Assemble E1 = fac1*M - J  (n×n real system)
  *   radau5_BuildE2c       — Assemble n×n complex E2 system
  *   radau5_DecompE1       — Factor E1 via SUNLinSolSetup
- *   radau5_DecompE2c      — Factor E2 via LAPACK zgetrf / KLU klu_z_factor
- *   radau5_SolveE2c       — Solve E2 via LAPACK zgetrs / KLU klu_z_solve
+ *   radau5_DecompE2c      — Factor E2 via SUNLinSolSetup (complex modules)
+ *   radau5_SolveE2c       — Solve E2 via SUNLinSolSolve (complex modules)
  *   radau5_ComputeScal    — Error weight vector scal[i] = atol[i] + rtol[i]*|y[i]|
  * ---------------------------------------------------------------------------*/
 
+#include <complex.h>
 #include <math.h>
 #include <string.h>
 #include <stdlib.h>
@@ -405,7 +406,7 @@ int radau5_InitConstants(Radau5Mem rmem)
   if (ns == 3)
   {
     /* --- NS=3 (order 5) constants --- */
-    sunrealtype SQ6 = sqrt(SUN_RCONST(6.0));
+    sunrealtype SQ6 = SUNRsqrt(SUN_RCONST(6.0));
     sunrealtype c1  = (SUN_RCONST(4.0) - SQ6) / SUN_RCONST(10.0);
     sunrealtype c2  = (SUN_RCONST(4.0) + SQ6) / SUN_RCONST(10.0);
 
@@ -417,15 +418,15 @@ int radau5_InitConstants(Radau5Mem rmem)
     rmem->dd[1] = (-SUN_RCONST(13.0) + SUN_RCONST(7.0) * SQ6) / SUN_RCONST(3.0);
     rmem->dd[2] = -SUN_RCONST(1.0) / SUN_RCONST(3.0);
 
-    sunrealtype u1 = (SUN_RCONST(6.0) + pow(SUN_RCONST(81.0), SUN_RCONST(1.0)/SUN_RCONST(3.0))
-                                        - pow(SUN_RCONST(9.0),  SUN_RCONST(1.0)/SUN_RCONST(3.0)))
+    sunrealtype u1 = (SUN_RCONST(6.0) + SUNRpowerR(SUN_RCONST(81.0), SUN_RCONST(1.0)/SUN_RCONST(3.0))
+                                        - SUNRpowerR(SUN_RCONST(9.0),  SUN_RCONST(1.0)/SUN_RCONST(3.0)))
                      / SUN_RCONST(30.0);
-    sunrealtype alph = (SUN_RCONST(12.0) - pow(SUN_RCONST(81.0), SUN_RCONST(1.0)/SUN_RCONST(3.0))
-                                          + pow(SUN_RCONST(9.0),  SUN_RCONST(1.0)/SUN_RCONST(3.0)))
+    sunrealtype alph = (SUN_RCONST(12.0) - SUNRpowerR(SUN_RCONST(81.0), SUN_RCONST(1.0)/SUN_RCONST(3.0))
+                                          + SUNRpowerR(SUN_RCONST(9.0),  SUN_RCONST(1.0)/SUN_RCONST(3.0)))
                        / SUN_RCONST(60.0);
-    sunrealtype beta = (pow(SUN_RCONST(81.0), SUN_RCONST(1.0)/SUN_RCONST(3.0))
-                       + pow(SUN_RCONST(9.0),  SUN_RCONST(1.0)/SUN_RCONST(3.0)))
-                       * sqrt(SUN_RCONST(3.0)) / SUN_RCONST(60.0);
+    sunrealtype beta = (SUNRpowerR(SUN_RCONST(81.0), SUN_RCONST(1.0)/SUN_RCONST(3.0))
+                       + SUNRpowerR(SUN_RCONST(9.0),  SUN_RCONST(1.0)/SUN_RCONST(3.0)))
+                       * SUNRsqrt(SUN_RCONST(3.0)) / SUN_RCONST(60.0);
     sunrealtype cno = alph * alph + beta * beta;
     u1   = SUN_RCONST(1.0) / u1;
     alph = alph / cno;
@@ -778,7 +779,7 @@ int radau5_DQJacDense(Radau5Mem rmem, sunrealtype t, N_Vector y, N_Vector fy)
     ysave     = y_data[j];
 
     /* Fortran radau5.f: DELT=DSQRT(UROUND*MAX(1.D-5,ABS(YSAFE))) */
-    inc = SUNRsqrt(SUN_UNIT_ROUNDOFF * SUNMAX(SUN_RCONST(1.0e-5), fabs(ysave)));
+    inc = SUNRsqrt(SUN_UNIT_ROUNDOFF * SUNMAX(SUN_RCONST(1.0e-5), SUNRabs(ysave)));
 
     y_data[j] = ysave + inc;
     {
@@ -827,7 +828,7 @@ int radau5_DQJacBand(Radau5Mem rmem, sunrealtype t, N_Vector y, N_Vector fy)
 
   fnorm  = N_VWrmsNorm(fy, rmem->scal);
   minInc = (fnorm != SUN_RCONST(0.0))
-           ? (SUN_RCONST(1000.0) * fabs(rmem->h) * SUN_UNIT_ROUNDOFF
+           ? (SUN_RCONST(1000.0) * SUNRabs(rmem->h) * SUN_UNIT_ROUNDOFF
               * (sunrealtype)n * fnorm)
            : SUN_RCONST(1.0);
 
@@ -854,7 +855,7 @@ int radau5_DQJacBand(Radau5Mem rmem, sunrealtype t, N_Vector y, N_Vector fy)
     /* Perturb all columns in this group simultaneously */
     for (j = group; j < n; j += width)
     {
-      inc = SUNMAX(srur * fabs(y_data[j]), minInc / scal_data[j]);
+      inc = SUNMAX(srur * SUNRabs(y_data[j]), minInc / scal_data[j]);
       inc = (y_data[j] + inc) - y_data[j];
       if (inc == SUN_RCONST(0.0)) inc = srur;
       incs[j]        = inc;
@@ -918,7 +919,7 @@ int radau5_DQJacSparse(Radau5Mem rmem, sunrealtype t, N_Vector y, N_Vector fy)
 
   fnorm  = N_VWrmsNorm(fy, rmem->scal);
   minInc = (fnorm != SUN_RCONST(0.0))
-           ? (SUN_RCONST(1000.0) * fabs(rmem->h) * SUN_UNIT_ROUNDOFF
+           ? (SUN_RCONST(1000.0) * SUNRabs(rmem->h) * SUN_UNIT_ROUNDOFF
               * (sunrealtype)n * fnorm)
            : SUN_RCONST(1.0);
 
@@ -953,7 +954,7 @@ int radau5_DQJacSparse(Radau5Mem rmem, sunrealtype t, N_Vector y, N_Vector fy)
     for (k = group_offsets[group]; k < group_offsets[group + 1]; k++)
     {
       j = group_cols[k];
-      inc = SUNMAX(srur * fabs(y_data[j]), minInc / scal_data[j]);
+      inc = SUNMAX(srur * SUNRabs(y_data[j]), minInc / scal_data[j]);
       inc = (y_data[j] + inc) - y_data[j];
       if (inc == SUN_RCONST(0.0)) inc = srur;
       incs[j]        = inc;
@@ -1210,14 +1211,15 @@ int radau5_BuildE2c(Radau5Mem rmem, int pair_idx, sunrealtype alphn, sunrealtype
   sunrealtype gamma_im = omega * a10;  /* = sqrt(-a01*a10) with sign of a10 */
   rmem->e2c_omega[pair_idx] = omega;
 
-  double* E2d = rmem->E2c_data[pair_idx];
+  SUNMatrix E2 = rmem->E2c_mat[pair_idx];
 
 #ifdef RADAU5_HAVE_KLU
   if (rmem->mat_id == SUNMATRIX_SPARSE)
   {
-    /* Sparse (CSC) case: fill interleaved values over the n×n pattern */
-    sunindextype *Ep = rmem->E2c_colptrs;
-    sunindextype *Ei = rmem->E2c_rowinds;
+    /* Sparse (CSC) case: fill complex values over the n×n pattern */
+    sunindextype *Ep = SM_INDEXPTRS_ZS(E2);
+    sunindextype *Ei = SM_INDEXVALS_ZS(E2);
+    suncomplextype *E2d = SM_DATA_ZS(E2);
 
     int m_is_sparse = (M != NULL && SUNMatGetID(M) == SUNMATRIX_SPARSE);
 
@@ -1238,21 +1240,19 @@ int radau5_BuildE2c(Radau5Mem rmem, int pair_idx, sunrealtype alphn, sunrealtype
         else
           mij = SM_ELEMENT_D(M, i, j);
 
-        /* E2c[i,j] = (gamma_re + i*gamma_im)*mij - jij */
-        E2d[2 * k]     = gamma_re * mij - jij;
-        E2d[2 * k + 1] = gamma_im * mij;
+        /* E2c[k] = (gamma_re + i*gamma_im)*mij - jij */
+        E2d[k] = (gamma_re * mij - jij) + _Complex_I * (gamma_im * mij);
       }
     }
     return RADAU5_SUCCESS;
   }
 #endif
 
-  /* Band case: LAPACK zgbtrf band storage format */
+  /* Band case */
   if (rmem->mat_id == SUNMATRIX_BAND)
   {
     sunindextype mu = rmem->mu;
     sunindextype ml = rmem->ml;
-    sunindextype ldab = rmem->E2c_ldab;
     int j_is_band = (rmem->jac_id == SUNMATRIX_BAND);
     sunindextype mu_J = j_is_band ? SM_UBAND_B(J) : 0;
     sunindextype ml_J = j_is_band ? SM_LBAND_B(J) : 0;
@@ -1260,7 +1260,7 @@ int radau5_BuildE2c(Radau5Mem rmem, int pair_idx, sunrealtype alphn, sunrealtype
     sunindextype muM = m_is_band ? SM_UBAND_B(M) : 0;
     sunindextype mlM = m_is_band ? SM_LBAND_B(M) : 0;
 
-    memset(E2d, 0, (size_t)(2 * ldab * n) * sizeof(double));
+    SUNMatZero(E2);
 
     for (j = 0; j < n; j++)
     {
@@ -1284,17 +1284,14 @@ int radau5_BuildE2c(Radau5Mem rmem, int pair_idx, sunrealtype alphn, sunrealtype
         else
           mij = SM_ELEMENT_D(M, i, j);
 
-        /* LAPACK band storage: row = kl + ku + i - j, column = j */
-        sunindextype row = ml + mu + i - j;
-        sunindextype idx = 2 * (row + j * ldab);
-        E2d[idx]     = gamma_re * mij - jij;
-        E2d[idx + 1] = gamma_im * mij;
+        SM_ELEMENT_ZB(E2, i, j) = (gamma_re * mij - jij)
+                                   + _Complex_I * (gamma_im * mij);
       }
     }
     return RADAU5_SUCCESS;
   }
 
-  /* Dense case: column-major interleaved */
+  /* Dense case */
   {
     int j_is_band = (rmem->jac_id == SUNMATRIX_BAND);
     sunindextype mu_J = j_is_band ? SM_UBAND_B(J) : 0;
@@ -1323,9 +1320,8 @@ int radau5_BuildE2c(Radau5Mem rmem, int pair_idx, sunrealtype alphn, sunrealtype
         else
           mij = SM_ELEMENT_D(M, i, j);
 
-        sunindextype idx = 2 * (i + j * n);
-        E2d[idx]     = gamma_re * mij - jij;
-        E2d[idx + 1] = gamma_im * mij;
+        SM_ELEMENT_ZD(E2, i, j) = (gamma_re * mij - jij)
+                                    + _Complex_I * (gamma_im * mij);
       }
     }
   }
@@ -1336,68 +1332,16 @@ int radau5_BuildE2c(Radau5Mem rmem, int pair_idx, sunrealtype alphn, sunrealtype
 /* ---------------------------------------------------------------------------
  * radau5_DecompE2c
  *
- * Factor the n×n complex E2 matrix. Uses LAPACK zgetrf for dense/band,
- * KLU klu_z_factor/klu_z_refactor for sparse. Increments ndec.
+ * Factor the n×n complex E2 matrix via SUNLinSolSetup. Increments ndec.
  * ---------------------------------------------------------------------------*/
-
-/* LAPACK prototypes (Fortran calling convention) */
-extern void zgetrf_(int* m, int* n, double* A, int* lda, int* ipiv, int* info);
-extern void zgetrs_(char* trans, int* n, int* nrhs, double* A, int* lda,
-                    int* ipiv, double* B, int* ldb, int* info);
-extern void zgbtrf_(int* m, int* n, int* kl, int* ku, double* AB, int* ldab,
-                    int* ipiv, int* info);
-extern void zgbtrs_(char* trans, int* n, int* kl, int* ku, int* nrhs,
-                    double* AB, int* ldab, int* ipiv, double* B, int* ldb,
-                    int* info);
 
 int radau5_DecompE2c(Radau5Mem rmem, int pair_idx)
 {
   rmem->ndec++;
 
-#ifdef RADAU5_HAVE_KLU
-  if (rmem->mat_id == SUNMATRIX_SPARSE)
-  {
-    if (rmem->E2c_Numeric[pair_idx] == NULL)
-    {
-      rmem->E2c_Numeric[pair_idx] = klu_z_factor(
-        (int*)rmem->E2c_colptrs, (int*)rmem->E2c_rowinds,
-        rmem->E2c_data[pair_idx],
-        (klu_symbolic*)rmem->E2c_Symbolic, (klu_common*)rmem->E2c_Common_ptr);
-    }
-    else
-    {
-      klu_z_refactor(
-        (int*)rmem->E2c_colptrs, (int*)rmem->E2c_rowinds,
-        rmem->E2c_data[pair_idx],
-        (klu_symbolic*)rmem->E2c_Symbolic,
-        (klu_numeric*)rmem->E2c_Numeric[pair_idx], (klu_common*)rmem->E2c_Common_ptr);
-    }
-    return (rmem->E2c_Numeric[pair_idx] != NULL) ? RADAU5_SUCCESS
-                                                  : RADAU5_SINGULAR_MATRIX;
-  }
-#endif
+  int ret = SUNLinSolSetup(rmem->E2c_LS[pair_idx], rmem->E2c_mat[pair_idx]);
 
-  /* Dense/Band: LAPACK zgetrf / zgbtrf */
-  if (rmem->mat_id == SUNMATRIX_BAND)
-  {
-    int N = (int)rmem->n;
-    int KL = (int)rmem->ml;
-    int KU = (int)rmem->mu;
-    int LDAB = (int)rmem->E2c_ldab;
-    int info;
-    zgbtrf_(&N, &N, &KL, &KU, rmem->E2c_data[pair_idx], &LDAB,
-            rmem->E2c_ipiv[pair_idx], &info);
-    return (info == 0) ? RADAU5_SUCCESS : RADAU5_SINGULAR_MATRIX;
-  }
-
-  /* Dense: LAPACK zgetrf */
-  {
-    int N = (int)rmem->n;
-    int info;
-    zgetrf_(&N, &N, rmem->E2c_data[pair_idx], &N,
-            rmem->E2c_ipiv[pair_idx], &info);
-    return (info == 0) ? RADAU5_SUCCESS : RADAU5_SINGULAR_MATRIX;
-  }
+  return (ret == 0) ? RADAU5_SUCCESS : RADAU5_SINGULAR_MATRIX;
 }
 
 /* ---------------------------------------------------------------------------
@@ -1409,54 +1353,37 @@ int radau5_DecompE2c(Radau5Mem rmem, int pair_idx)
  *
  * Applies ω-scaling: pack d = rhs_re + i·ω·rhs_im, solve K·z = d,
  * unpack x_re = Re(z), x_im = Im(z)/ω.
+ * Uses N_VComplexPack/Unpack and SUNLinSolSolve.
  * ---------------------------------------------------------------------------*/
 int radau5_SolveE2c(Radau5Mem rmem, int pair_idx,
                     sunrealtype* rhs_re, sunrealtype* rhs_im)
 {
   sunindextype n = rmem->n;
   sunrealtype omega = rmem->e2c_omega[pair_idx];
-  double* work = rmem->E2c_rhs[pair_idx];
+  sunrealtype inv_omega = SUN_RCONST(1.0) / omega;
+  N_Vector b_vec = rmem->E2c_rhs_vec[pair_idx];
+  N_Vector x_vec = rmem->E2c_sol_vec[pair_idx];
+  suncomplextype *bd, *xd;
 
-  /* Pack: work[i] = rhs_re[i] + i·ω·rhs_im[i] */
+  /* Pack: b[i] = rhs_re[i] + i·ω·rhs_im[i] */
+  bd = NV_DATA_ZS(b_vec);
   for (sunindextype i = 0; i < n; i++)
   {
-    work[2 * i]     = (double)rhs_re[i];
-    work[2 * i + 1] = (double)(omega * rhs_im[i]);
+    bd[i] = (suncomplextype)rhs_re[i]
+            + _Complex_I * (suncomplextype)(omega * rhs_im[i]);
   }
 
-#ifdef RADAU5_HAVE_KLU
-  if (rmem->mat_id == SUNMATRIX_SPARSE)
-  {
-    klu_z_solve(
-      (klu_symbolic*)rmem->E2c_Symbolic,
-      (klu_numeric*)rmem->E2c_Numeric[pair_idx],
-      (int)n, 1, work, (klu_common*)rmem->E2c_Common_ptr);
-  }
-  else
-#endif
-  if (rmem->mat_id == SUNMATRIX_BAND)
-  {
-    int N = (int)n, KL = (int)rmem->ml, KU = (int)rmem->mu;
-    int LDAB = (int)rmem->E2c_ldab;
-    int nrhs = 1, info;
-    char trans = 'N';
-    zgbtrs_(&trans, &N, &KL, &KU, &nrhs, rmem->E2c_data[pair_idx], &LDAB,
-            rmem->E2c_ipiv[pair_idx], work, &N, &info);
-  }
-  else
-  {
-    /* Dense: LAPACK zgetrs */
-    int N = (int)n, nrhs = 1, info;
-    char trans = 'N';
-    zgetrs_(&trans, &N, &nrhs, rmem->E2c_data[pair_idx], &N,
-            rmem->E2c_ipiv[pair_idx], work, &N, &info);
-  }
+  /* Solve */
+  int ret = SUNLinSolSolve(rmem->E2c_LS[pair_idx], rmem->E2c_mat[pair_idx],
+                           x_vec, b_vec, SUN_RCONST(0.0));
+  if (ret != 0) { return RADAU5_SINGULAR_MATRIX; }
 
   /* Unpack: x_re = Re(z), x_im = Im(z)/ω */
+  xd = NV_DATA_ZS(x_vec);
   for (sunindextype i = 0; i < n; i++)
   {
-    rhs_re[i] = (sunrealtype)work[2 * i];
-    rhs_im[i] = (sunrealtype)(work[2 * i + 1] / omega);
+    rhs_re[i] = (sunrealtype)creal(xd[i]);
+    rhs_im[i] = (sunrealtype)(cimag(xd[i]) * inv_omega);
   }
 
   return RADAU5_SUCCESS;

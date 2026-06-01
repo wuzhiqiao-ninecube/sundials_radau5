@@ -1,11 +1,12 @@
 # RADAU5 — Variable-Order Implicit Runge-Kutta Solver (C / SUNDIALS)
 
-A C implementation of the RADAU solver — a variable-order (3, 5, or 7 stages; orders 5, 9, 13) implicit Runge-Kutta method (Radau IIA family) for stiff ODEs and DAEs. Faithfully translated from the Fortran code by E. Hairer and G. Wanner (*Solving Ordinary Differential Equations II*, Springer 1996), using [SUNDIALS](https://github.com/LLNL/sundials) abstractions (N_Vector, SUNMatrix, SUNLinearSolver) for flexible linear algebra backends.
+A C implementation of the RADAU solver — a variable-order (3, 5, 7, 9, 11, or 13 stages; orders 5, 9, 13, 17, 21, 25) implicit Runge-Kutta method (Radau IIA family) for stiff ODEs and DAEs. Faithfully translated from the Fortran code by E. Hairer and G. Wanner (*Solving Ordinary Differential Equations II*, Springer 1996), using [SUNDIALS](https://github.com/LLNL/sundials) abstractions (N_Vector, SUNMatrix, SUNLinearSolver) for flexible linear algebra backends.
 
 ## Features
 
-- **Variable-order**: ns=3 (order 5), ns=5 (order 9), ns=7 (order 13), with runtime order switching
+- **Variable-order**: ns=3 (order 5) through ns=13 (order 25), with runtime order switching
 - **Dense, band, and sparse (KLU)** Jacobian support
+- **Complex linear algebra via SUNDIALS-compliant modules** — N_Vector_ComplexSerial, SUNMatrix_ComplexDense/Band/Sparse, SUNLinSol_ComplexDense/Band/Sparse using C99 `double _Complex`
 - **DQ (difference quotient) Jacobian** with Curtis-Powell-Reid column grouping for sparse systems
 - **DAE support** — index-1, 2, and 3 with user-supplied mass matrix (dense or sparse)
 - **Two Newton decoupling modes**: eigenvalue decomposition (classical) or Schur decomposition
@@ -18,7 +19,8 @@ A C implementation of the RADAU solver — a variable-order (3, 5, or 7 stages; 
 
 - [SUNDIALS](https://github.com/LLNL/sundials) (v6.0+ recommended)
 - CMake 3.18+
-- C compiler (C99)
+- C compiler (C99 with `<complex.h>` support)
+- LAPACK (for complex LU: `zgetrf`/`zgetrs`, `zgbtrf`/`zgbtrs`)
 - Optional: SuiteSparse/KLU for sparse linear algebra
 
 ## Build
@@ -87,7 +89,7 @@ int Radau5SetLinearSolver(void* mem, SUNMatrix J, SUNMatrix M);
 int Radau5SStolerances(void* mem, sunrealtype rtol, sunrealtype atol);
 
 /* Optional configuration */
-int Radau5SetNumStages(void* mem, int ns);         /* fixed order: ns ∈ {3,5,7} */
+int Radau5SetNumStages(void* mem, int ns);         /* fixed order: ns ∈ {3,5,7,9,11,13} */
 int Radau5SetOrderLimits(void* mem, int nsmin, int nsmax); /* variable order */
 int Radau5SetJacFn(void* mem, Radau5JacFn jac);
 int Radau5SetMassFn(void* mem, Radau5MassFn mas, SUNMatrix M);

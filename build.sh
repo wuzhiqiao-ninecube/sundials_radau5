@@ -5,7 +5,7 @@ SUNDIALS_BUILD=/mnt/d/workon/sundials/build
 RADAU5=/mnt/d/workon/sundials/thirdpart/radau5
 CC=clang
 
-INC="-I${SUNDIALS_BUILD}/include -I${SUNDIALS_SRC}/include -I/usr/lib/x86_64-linux-gnu/openmpi/include -I/usr/include/suitesparse -I${RADAU5}/include -I${RADAU5}/src"
+INC="-I${SUNDIALS_BUILD}/include -I${SUNDIALS_SRC}/include -I/usr/lib/x86_64-linux-gnu/openmpi/include -I/usr/include/suitesparse -I${RADAU5}/include -I${RADAU5}/src -I${RADAU5}/src/nvector/complex_serial -I${RADAU5}/src/sunmatrix/complex_dense -I${RADAU5}/src/sunmatrix/complex_band -I${RADAU5}/src/sunmatrix/complex_sparse -I${RADAU5}/src/sunlinsol/complex_dense -I${RADAU5}/src/sunlinsol/complex_band -I${RADAU5}/src/sunlinsol/complex_sparse"
 
 SLIBS="${SUNDIALS_BUILD}/src/nvector/serial/libsundials_nvecserial.a \
 ${SUNDIALS_BUILD}/src/sunmatrix/dense/libsundials_sunmatrixdense.a \
@@ -19,14 +19,14 @@ ${SUNDIALS_BUILD}/src/sundials/libsundials_core.a"
 MPI_LIB="-L/usr/lib/x86_64-linux-gnu/openmpi/lib -lmpi"
 KLU_LIB="-lklu -lamd -lcolamd -lbtf -lsuitesparseconfig"
 
-RADAU5_SRCS="${RADAU5}/src/radau5.c ${RADAU5}/src/radau5_linsys.c ${RADAU5}/src/radau5_newt.c ${RADAU5}/src/radau5_estrad.c ${RADAU5}/src/radau5_step.c ${RADAU5}/src/radau5_contr.c ${RADAU5}/src/radau5_ic.c ${RADAU5}/src/radau5_colgroup.c ${RADAU5}/src/radau5_root.c"
+RADAU5_SRCS="${RADAU5}/src/radau5.c ${RADAU5}/src/radau5_linsys.c ${RADAU5}/src/radau5_newt.c ${RADAU5}/src/radau5_estrad.c ${RADAU5}/src/radau5_step.c ${RADAU5}/src/radau5_contr.c ${RADAU5}/src/radau5_ic.c ${RADAU5}/src/radau5_colgroup.c ${RADAU5}/src/radau5_root.c ${RADAU5}/src/nvector/complex_serial/nvector_complex_serial.c ${RADAU5}/src/sunmatrix/complex_dense/sunmatrix_complex_dense.c ${RADAU5}/src/sunmatrix/complex_band/sunmatrix_complex_band.c ${RADAU5}/src/sunmatrix/complex_sparse/sunmatrix_complex_sparse.c ${RADAU5}/src/sunlinsol/complex_dense/sunlinsol_complex_dense.c ${RADAU5}/src/sunlinsol/complex_band/sunlinsol_complex_band.c ${RADAU5}/src/sunlinsol/complex_sparse/sunlinsol_complex_sparse.c"
 
 mkdir -p bin
 
 build_example() {
     local name=$1
     echo "Building ${name}..."
-    ${CC} -O2 -o bin/${name} ${INC} examples/${name}.c ${RADAU5_SRCS} ${SLIBS} ${MPI_LIB} ${KLU_LIB} -lm 2>&1
+    ${CC} -O2 -DRADAU5_HAVE_KLU -o bin/${name} ${INC} examples/${name}.c ${RADAU5_SRCS} ${SLIBS} ${MPI_LIB} ${KLU_LIB} -llapack -lm 2>&1
 }
 
 for ex in "$@"; do

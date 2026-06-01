@@ -8,6 +8,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <math.h>
+#include <complex.h>
 #include <sundials/sundials_types.h>
 #include <sundials/sundials_context.h>
 #include <nvector/nvector_serial.h>
@@ -73,18 +74,18 @@ int main(void)
   /* Check omega = 1 for eigenvalue mode (a01=-betan, a10=betan) */
   CHECK_VAL("omega_eigen", rmem->e2c_omega[0], 1.0);
 
-  /* Check E2c_data: interleaved [Re,Im] column-major
+  /* Check E2c_data: complex column-major via SM_ELEMENT_ZD
    * Col 0: (0,0)=(2,2), (1,0)=(-3,0)
    * Col 1: (0,1)=(-2,0), (1,1)=(-1,2) */
-  double* E2d = rmem->E2c_data[0];
-  CHECK_VAL("E2c[0,0].re", E2d[0], 2.0);
-  CHECK_VAL("E2c[0,0].im", E2d[1], 2.0);
-  CHECK_VAL("E2c[1,0].re", E2d[2], -3.0);
-  CHECK_VAL("E2c[1,0].im", E2d[3], 0.0);
-  CHECK_VAL("E2c[0,1].re", E2d[4], -2.0);
-  CHECK_VAL("E2c[0,1].im", E2d[5], 0.0);
-  CHECK_VAL("E2c[1,1].re", E2d[6], -1.0);
-  CHECK_VAL("E2c[1,1].im", E2d[7], 2.0);
+  suncomplextype *E2d = SM_DATA_ZD(rmem->E2c_mat[0]);
+  CHECK_VAL("E2c[0,0].re", creal(E2d[0]), 2.0);
+  CHECK_VAL("E2c[0,0].im", cimag(E2d[0]), 2.0);
+  CHECK_VAL("E2c[1,0].re", creal(E2d[1]), -3.0);
+  CHECK_VAL("E2c[1,0].im", cimag(E2d[1]), 0.0);
+  CHECK_VAL("E2c[0,1].re", creal(E2d[2]), -2.0);
+  CHECK_VAL("E2c[0,1].im", cimag(E2d[2]), 0.0);
+  CHECK_VAL("E2c[1,1].re", creal(E2d[3]), -1.0);
+  CHECK_VAL("E2c[1,1].im", cimag(E2d[3]), 2.0);
 
   /* --- Test 2: Factor and solve ---
    * Solve K*z = d where d = (1+0i, 0+0i)
@@ -129,15 +130,15 @@ int main(void)
 
   radau5_BuildE2c(rmem, 0, alphn, betan);
 
-  E2d = rmem->E2c_data[0];
-  CHECK_VAL("E2c_mass[0,0].re", E2d[0], 5.0);
-  CHECK_VAL("E2c_mass[0,0].im", E2d[1], 4.0);
-  CHECK_VAL("E2c_mass[1,0].re", E2d[2], -3.0);
-  CHECK_VAL("E2c_mass[1,0].im", E2d[3], 0.0);
-  CHECK_VAL("E2c_mass[0,1].re", E2d[4], -2.0);
-  CHECK_VAL("E2c_mass[0,1].im", E2d[5], 0.0);
-  CHECK_VAL("E2c_mass[1,1].re", E2d[6], 5.0);
-  CHECK_VAL("E2c_mass[1,1].im", E2d[7], 6.0);
+  E2d = SM_DATA_ZD(rmem->E2c_mat[0]);
+  CHECK_VAL("E2c_mass[0,0].re", creal(E2d[0]), 5.0);
+  CHECK_VAL("E2c_mass[0,0].im", cimag(E2d[0]), 4.0);
+  CHECK_VAL("E2c_mass[1,0].re", creal(E2d[1]), -3.0);
+  CHECK_VAL("E2c_mass[1,0].im", cimag(E2d[1]), 0.0);
+  CHECK_VAL("E2c_mass[0,1].re", creal(E2d[2]), -2.0);
+  CHECK_VAL("E2c_mass[0,1].im", cimag(E2d[2]), 0.0);
+  CHECK_VAL("E2c_mass[1,1].re", creal(E2d[3]), 5.0);
+  CHECK_VAL("E2c_mass[1,1].im", cimag(E2d[3]), 6.0);
 
   /* Cleanup */
   SUNMatDestroy(rmem->M);

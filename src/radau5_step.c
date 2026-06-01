@@ -184,7 +184,7 @@ label30:
   if (rmem->nstep > rmem->mxstep)
     return RADAU5_TOO_MANY_STEPS;
 
-  if (SUN_RCONST(0.1) * fabs(rmem->h) <= fabs(rmem->tn) * uround)
+  if (SUN_RCONST(0.1) * SUNRabs(rmem->h) <= SUNRabs(rmem->tn) * uround)
     return RADAU5_STEP_TOO_SMALL;
 
   /* DAE index-2/3 scaling of scal */
@@ -357,13 +357,13 @@ label30:
     sunrealtype posneg = (rmem->h >= SUN_RCONST(0.0))
                          ? SUN_RCONST(1.0) : SUN_RCONST(-1.0);
     sunrealtype hmaxn  = (rmem->hmax > SUN_RCONST(0.0))
-                         ? rmem->hmax : fabs(rmem->h) * SUN_RCONST(1.0e4);
-    hnew = posneg * SUNMIN(fabs(hnew), hmaxn);
-    rmem->hopt = SUNMIN(fabs(rmem->h), fabs(hnew));
+                         ? rmem->hmax : SUNRabs(rmem->h) * SUN_RCONST(1.0e4);
+    hnew = posneg * SUNMIN(SUNRabs(hnew), hmaxn);
+    rmem->hopt = SUNMIN(SUNRabs(rmem->h), SUNRabs(hnew));
 
     /* If previous step was rejected, don't grow beyond |h| */
     if (rmem->reject)
-      hnew = posneg * SUNMIN(fabs(hnew), fabs(rmem->h));
+      hnew = posneg * SUNMIN(SUNRabs(hnew), SUNRabs(rmem->h));
 
     rmem->reject = 0;
     rmem->caljac = 0;

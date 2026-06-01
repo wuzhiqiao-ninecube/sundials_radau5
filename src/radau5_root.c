@@ -109,9 +109,9 @@ static int radau5_RootFind(Radau5Mem rmem)
   sunrealtype maxfrac = SUN_RCONST(0.0);
   for (i = 0; i < nrtfn; i++) {
     if (!sgnchg[i]) continue;
-    sunrealtype dg = fabs(ghi_loc[i] - glo_loc[i]);
+    sunrealtype dg = SUNRabs(ghi_loc[i] - glo_loc[i]);
     if (dg < SUN_RCONST(1.0e-300)) continue;
-    sunrealtype gfrac = fabs(ghi_loc[i]) / dg;
+    sunrealtype gfrac = SUNRabs(ghi_loc[i]) / dg;
     if (imax < 0 || gfrac > maxfrac) {
       maxfrac = gfrac;
       imax = i;
@@ -132,13 +132,13 @@ static int radau5_RootFind(Radau5Mem rmem)
 
   for (int iter = 0; iter < RADAU5_ROOT_MAXITER; iter++) {
     sunrealtype ttol = SUN_RCONST(100.0) * SUN_UNIT_ROUNDOFF *
-                       SUNMAX(fabs(tlo), fabs(thi));
-    if (fabs(thi - tlo) <= ttol) break;
+                       SUNMAX(SUNRabs(tlo), SUNRabs(thi));
+    if (SUNRabs(thi - tlo) <= ttol) break;
 
     /* Secant step using the driving function imax, with Illinois weight */
     sunrealtype tmid;
     sunrealtype dg = ghi_loc[imax] - alpha * glo_loc[imax];
-    if (fabs(dg) > SUN_RCONST(1.0e-300)) {
+    if (SUNRabs(dg) > SUN_RCONST(1.0e-300)) {
       tmid = thi - ghi_loc[imax] * (thi - tlo) / dg;
     } else {
       tmid = SUN_RCONST(0.5) * (tlo + thi);
@@ -185,9 +185,9 @@ static int radau5_RootFind(Radau5Mem rmem)
         sgnchg[i] = 0;
         continue;
       }
-      sunrealtype dg2 = fabs(ghi_loc[i] - glo_loc[i]);
+      sunrealtype dg2 = SUNRabs(ghi_loc[i] - glo_loc[i]);
       if (dg2 < SUN_RCONST(1.0e-300)) continue;
-      sunrealtype gfrac = fabs(ghi_loc[i]) / dg2;
+      sunrealtype gfrac = SUNRabs(ghi_loc[i]) / dg2;
       if (imax < 0 || gfrac > maxfrac) {
         maxfrac = gfrac;
         imax = i;
@@ -201,7 +201,7 @@ static int radau5_RootFind(Radau5Mem rmem)
    * zero exactly (due to interpolation error) — in that case thi converges
    * to the near-zero point while tlo stays stuck, making the midpoint wrong.
    * Using the endpoint with smallest |g| gives the best root estimate. */
-  if (imax >= 0 && fabs(glo_loc[imax]) < fabs(ghi_loc[imax])) {
+  if (imax >= 0 && SUNRabs(glo_loc[imax]) < SUNRabs(ghi_loc[imax])) {
     rmem->troot = tlo;
   } else {
     rmem->troot = thi;
@@ -271,7 +271,7 @@ int radau5_root_Check1(Radau5Mem rmem)
   if (any_zero) {
     /* Probe slightly ahead to establish sign baseline */
     sunrealtype smallh = SUNMAX(
-      SUN_RCONST(100.0) * SUN_UNIT_ROUNDOFF * fabs(rmem->tn),
+      SUN_RCONST(100.0) * SUN_UNIT_ROUNDOFF * SUNRabs(rmem->tn),
       SUN_RCONST(1.0e-13));
     if (rmem->h < SUN_RCONST(0.0)) smallh = -smallh;
 

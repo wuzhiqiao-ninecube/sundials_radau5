@@ -31,6 +31,13 @@ set(RADAU5_SOURCES
     src/radau5_ic.c
     src/radau5_colgroup.c
     src/radau5_root.c
+    src/nvector/complex_serial/nvector_complex_serial.c
+    src/sunmatrix/complex_dense/sunmatrix_complex_dense.c
+    src/sunmatrix/complex_band/sunmatrix_complex_band.c
+    src/sunmatrix/complex_sparse/sunmatrix_complex_sparse.c
+    src/sunlinsol/complex_dense/sunlinsol_complex_dense.c
+    src/sunlinsol/complex_band/sunlinsol_complex_band.c
+    src/sunlinsol/complex_sparse/sunlinsol_complex_sparse.c
 )
 
 # Library
@@ -38,6 +45,13 @@ add_library(radau5 ${RADAU5_SOURCES})
 target_include_directories(radau5
     PUBLIC  ${CMAKE_CURRENT_SOURCE_DIR}/include
     PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/nvector/complex_serial
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/sunmatrix/complex_dense
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/sunmatrix/complex_band
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/sunmatrix/complex_sparse
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/sunlinsol/complex_dense
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/sunlinsol/complex_band
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/sunlinsol/complex_sparse
 )
 target_link_libraries(radau5
     PUBLIC
