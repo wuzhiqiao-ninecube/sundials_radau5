@@ -2,10 +2,12 @@
 
 ## 1. Overview
 
-RADAU5 is a C implementation of the 3-stage, order-5 implicit Runge-Kutta method
+RADAU5 is a C implementation of variable-stage implicit Runge-Kutta methods
 from the Radau IIA family, based on the Fortran code by E. Hairer and G. Wanner
-(*Solving Ordinary Differential Equations II*, Springer, 1996). It is designed
-for stiff ODEs and differential-algebraic equations (DAEs) of index up to 3.
+(*Solving Ordinary Differential Equations II*, Springer, 1996). It supports
+stage counts `ns = 3, 5, 7, 9, 11, 13`, corresponding to orders
+`5, 9, 13, 17, 21, 25`, and is designed for stiff ODEs and differential-
+algebraic equations (DAEs) of index up to 3.
 
 The solver is built on SUNDIALS abstractions (`N_Vector`, `SUNMatrix`,
 `SUNLinearSolver`, `SUNContext`) and supports dense, banded, and sparse (KLU)
@@ -15,13 +17,16 @@ Schur decomposition using orthogonal transforms.
 
 Key features:
 
-- Implicit 3-stage Radau IIA method (A-stable, L-stable, stiffly accurate)
+- Variable-stage Radau IIA methods: `ns=3` (order 5) through `ns=13` (order 25)
+- Fixed-order and runtime variable-order modes
 - Adaptive step size control (Gustafsson or classical)
 - Simplified Newton iteration with Jacobian reuse
 - Dense, band, and sparse (KLU) linear solvers
-- Analytic or difference-quotient Jacobian
+- Analytic or difference-quotient Jacobian, including sparse DQ with column grouping
 - Mass matrix support for DAEs
+- Event detection (rootfinding) with dense-output localization
 - Continuous output via collocation polynomial
+- Discontinuity reset support
 - Consistent initial condition computation for index-1 DAEs
 
 ## 2. Header Files and Libraries
@@ -145,12 +150,16 @@ acceptable.
 7. **Set optional inputs** *(optional)*
 
    ```c
+   Radau5SetNumStages(mem, ns);        /* fixed stage count: 3,5,7,9,11,13 */
+   Radau5SetOrderLimits(mem, nsmin, nsmax); /* runtime variable order */
    Radau5SetJacFn(mem, jac);           /* analytic Jacobian */
    Radau5SetSparsityPattern(mem, S);   /* sparse DQ Jacobian (alternative to SetJacFn) */
    Radau5SetMassFn(mem, mas, M);       /* mass matrix (DAEs) */
    Radau5SetInitStep(mem, h0);         /* initial step size */
    Radau5SetMaxStep(mem, hmax);        /* maximum step size */
    Radau5SetSchurDecomp(mem, 1);       /* use Schur transform */
+   Radau5RootInit(mem, nrtfn, g);      /* event detection */
+   Radau5ResetForDiscontinuity(mem, h0); /* restart after discontinuity */
    Radau5SetUserData(mem, user_data);  /* user data pointer */
    ```
 
@@ -439,15 +448,15 @@ Jacobian matrix `J`. The solver clones `J` internally and creates the
 appropriate linear solvers for the two Newton subsystems:
 
 - **E1** (n x n real): `fac1 * M - J`
-- **E2** (2n x 2n real): the realified complex system coupling two n x n blocks
+- **E2** (n x n complex): one complex system per conjugate eigenvalue/Schur pair
 
 The behavior depends on the matrix type of `J`:
 
-| Matrix type of `J`       | E1 solver       | E2 solver       | Notes                          |
-|--------------------------|-----------------|-----------------|--------------------------------|
-| `SUNDenseMatrix`         | Dense (n x n)   | Dense (2n x 2n) | DQ Jacobian available          |
-| `SUNBandMatrix`          | Band (n x n)    | Dense (2n x 2n) | DQ Jacobian available          |
-| `SUNSparseMatrix` (CSC)  | KLU (n x n)     | KLU (2n x 2n)   | Analytic Jacobian or DQ via `SetSparsityPattern` |
+| Matrix type of `J`       | E1 solver       | E2 solver             | Notes                          |
+|--------------------------|-----------------|-----------------------|--------------------------------|
+| `SUNDenseMatrix`         | Dense (n x n)   | Complex dense (n x n) | DQ Jacobian available          |
+| `SUNBandMatrix`          | Band (n x n)    | Complex band (n x n)  | DQ Jacobian available          |
+| `SUNSparseMatrix` (CSC)  | KLU (n x n)     | Complex KLU (n x n)   | Analytic Jacobian or DQ via `SetSparsityPattern` |
 
 Must be called after `Radau5Init` and before `Radau5Solve`.
 
@@ -465,13 +474,13 @@ Must be called after `Radau5Init` and before `Radau5Solve`.
 | `RADAU5_MEM_FAIL`     | Memory allocation or linear solver creation failed. |
 
 For band matrices, the upper and lower bandwidths are extracted from `J` and
-stored internally. The E2 system is always dense (2n x 2n) in the band case
-because the block coupling destroys the band structure.
+stored internally. E2 uses one n x n complex band system per conjugate
+pair, with the same effective bandwidth as E1.
 
-For sparse matrices, the E2 system is also sparse (CSC format). When `M` is
-also sparse, E1 is allocated with the union sparsity pattern `union(J, M)` and
-E2 NNZ = 2×nnz_union + 2×nnz_M. When `M` is NULL or non-sparse, E1 uses J's
-pattern alone. The user may either provide an analytic Jacobian via
+For sparse matrices, E2 uses n x n complex CSC/KLU systems. When `M` is
+also sparse, E1 uses the union sparsity pattern `union(J, M)` and E2 uses
+the same n x n union pattern. When `M` is `NULL` or non-sparse, E1 and E2
+use J's pattern alone. The user may either provide an analytic Jacobian via
 `Radau5SetJacFn`, or provide a sparsity pattern via `Radau5SetSparsityPattern`
 to enable automatic difference-quotient Jacobian computation using column
 grouping (Curtis-Powell-Reid technique).
@@ -538,6 +547,8 @@ or `RADAU5_ILL_INPUT` for invalid arguments.
 
 | Function                      | Key Argument(s)          | Default        | Description                                    |
 |-------------------------------|--------------------------|----------------|------------------------------------------------|
+| `Radau5SetNumStages`          | `ns`                     | 3              | Fixed stage count: 3, 5, 7, 9, 11, or 13      |
+| `Radau5SetOrderLimits`        | `nsmin`, `nsmax`         | 3, 3           | Runtime variable-order range                   |
 | `Radau5SetJacFn`              | `jac`                    | `NULL` (DQ)    | Analytic Jacobian callback                     |
 | `Radau5SetMassFn`             | `mas`, `M`               | `NULL` (M=I)   | Mass matrix callback and template matrix       |
 | `Radau5SetSolOutFn`           | `solout`                 | `NULL`         | Solution output callback                       |
@@ -551,7 +562,42 @@ or `RADAU5_ILL_INPUT` for invalid arguments.
 | `Radau5SetDAEIndex`           | `nind1`, `nind2`, `nind3`| n, 0, 0        | DAE index-component partition                  |
 | `Radau5SetStartNewton`        | `startn`                 | 0              | 0 = extrapolate, 1 = zero starting values      |
 | `Radau5SetSchurDecomp`        | `use_schur`              | 0              | 0 = eigenvalue decomp, 1 = Schur decomp        |
-| `Radau5SetSparsityPattern`    | `S`                      | `NULL`         | Sparsity pattern for sparse DQ Jacobian (column grouping) |
+| `Radau5SetSparsityPattern`    | `S`                      | `NULL`         | Sparsity pattern for sparse DQ Jacobian        |
+| `Radau5RootInit`              | `nrtfn`, `g`             | disabled       | Enable or disable event detection              |
+| `Radau5SetRootDirection`      | `rootdir`                | all directions | Root direction filters                         |
+| `Radau5ResetForDiscontinuity` | `h0`                     | n/a            | Restart solver state after a discontinuity     |
+
+### Radau5SetNumStages
+
+```c
+int Radau5SetNumStages(void* radau5_mem, int ns);
+```
+
+Selects a fixed Radau IIA stage count. Valid values are `3, 5, 7, 9, 11,
+13`, corresponding to orders `5, 9, 13, 17, 21, 25`. This function must be
+called before `Radau5Init`.
+
+| Argument     | Description                                |
+|--------------|--------------------------------------------|
+| `radau5_mem` | Opaque solver memory.                      |
+| `ns`         | Fixed stage count.                         |
+
+### Radau5SetOrderLimits
+
+```c
+int Radau5SetOrderLimits(void* radau5_mem, int nsmin, int nsmax);
+```
+
+Sets the allowed stage-count range for runtime variable-order selection.
+`nsmin` and `nsmax` must each be one of `3, 5, 7, 9, 11, 13`, and
+`nsmin <= nsmax`. Passing equal values is equivalent to fixed-order mode.
+This function must be called before `Radau5Init`.
+
+| Argument     | Description                                |
+|--------------|--------------------------------------------|
+| `radau5_mem` | Opaque solver memory.                      |
+| `nsmin`      | Minimum allowed stage count.               |
+| `nsmax`      | Maximum allowed stage count.               |
 
 ### Radau5SetJacFn
 
@@ -560,7 +606,10 @@ int Radau5SetJacFn(void* radau5_mem, Radau5JacFn jac);
 ```
 
 Sets the user-supplied Jacobian function. If `jac` is `NULL` (the default), the
-solver uses internal difference-quotient approximation (dense and band only).
+solver uses internal difference-quotient approximation for dense and band
+matrices. For sparse matrices, automatic DQ is available when a sparsity pattern
+has been provided with `Radau5SetSparsityPattern`; otherwise an analytic
+Jacobian is required.
 
 | Argument     | Description                                |
 |--------------|--------------------------------------------|
@@ -745,16 +794,16 @@ Controls the starting values for the Newton iteration at each step.
 int Radau5SetSchurDecomp(void* radau5_mem, int use_schur);
 ```
 
-Selects the transform used to decouple the 3-stage Newton system into
-independent linear systems.
+Selects the transform used to decouple the `ns`-stage Newton system into real
+E1 and complex E2 linear systems.
 
 | Value | Transform              | Description                                    |
 |-------|------------------------|------------------------------------------------|
-| 0     | Eigenvalue (default)   | Classical Hairer-Wanner T/TI eigenvector transform. E1 and E2 are solved independently. |
-| 1     | Schur                  | Orthogonal US/TS transform. Uses block back-substitution: solve E1 for the third stage, then substitute into E2 for the first two stages. |
+| 0     | Eigenvalue (default)   | Classical Hairer-Wanner T/TI eigenvector transform. E1 and all E2 pairs are solved independently. |
+| 1     | Schur                  | Orthogonal US/TS transform. Uses block back-substitution through the Schur 2x2 pairs and final 1x1 block. |
 
 The Schur decomposition can improve numerical stability for very stiff problems
-at the cost of slightly more coupling between the linear solves.
+at the cost of additional coupling between the transformed stage equations.
 
 | Argument     | Description                                |
 |--------------|--------------------------------------------|
@@ -799,6 +848,22 @@ multiple times; each call frees previous grouping data and recomputes.
 | `RADAU5_MEM_NULL`     | `radau5_mem` is `NULL`.                          |
 | `RADAU5_ILL_INPUT`    | `S` is `NULL`, not sparse, not CSC, or wrong dimensions. |
 | `RADAU5_MEM_FAIL`     | Memory allocation failed during grouping computation. |
+
+### Radau5ResetForDiscontinuity
+
+```c
+int Radau5ResetForDiscontinuity(void* radau5_mem, sunrealtype h0);
+```
+
+Resets the solver state after the user has advanced through a known
+discontinuity or changed problem data discontinuously. It resets the initial
+step size and first-step/rejection bookkeeping so the next `Radau5Solve` call
+starts cleanly from the current internal solution.
+
+| Argument     | Description                                |
+|--------------|--------------------------------------------|
+| `radau5_mem` | Opaque solver memory.                      |
+| `h0`         | Initial step size to try after the reset.  |
 
 ## 10. Main Solver Function
 
@@ -893,8 +958,9 @@ reports approximately twice the decomposition count compared to the original
 Fortran code (which counts the pair as one decomposition).
 
 **Note on `nfcn`:** The RHS evaluation count includes all evaluations: the
-initial evaluation, 3 evaluations per Newton iteration (one at each collocation
-point), and any additional evaluations for the error estimate refinement.
+initial evaluation, `ns` evaluations per Newton iteration (one at each
+collocation point), and any additional evaluations for the error estimate
+refinement.
 
 ## 12. Continuous Output
 
@@ -905,9 +971,9 @@ sunrealtype Radau5Contr(void* radau5_mem, sunindextype i, sunrealtype t);
 ```
 
 Returns the i-th component of the continuous output solution at time `t` using
-polynomial interpolation based on the collocation stages. The interpolant is
-a degree-3 polynomial that is accurate to the order of the method within the
-current step interval.
+polynomial interpolation based on the collocation stages. The interpolant has
+degree `ns` and is accurate to the order of the active Radau IIA method within
+the current step interval.
 
 This function is **only valid when called from within a `Radau5SolOutFn`
 callback**, for times `t` in the interval `[t_old, t_new]` where `t_old` and
@@ -975,7 +1041,19 @@ passed to `Radau5Init`) in place. It must be called after `Radau5Init`,
 | `RADAU5_ILL_INPUT` | `id` is `NULL` or solver not properly initialized.   |
 | `RADAU5_IC_FAIL`   | The IC computation failed to converge.               |
 
-## 14. Return Codes
+## 14. N_Vector Implementation Notes
+
+The solver prefers generic `N_Vector` operations for vector-level arithmetic,
+including scaling, linear sums, linear combinations, products, divisions, norms,
+and dot products. This keeps the implementation compatible with non-serial
+`N_Vector` implementations where direct host array access may be unavailable or
+expensive. Direct `N_VGetArrayPointer` access is limited to inherently
+componentwise or stage-coupled operations, such as dense stage transforms,
+complex E2 packing/unpacking, continuous-output coefficient construction,
+step extrapolation, DAE index scaling, difference-quotient perturbations, and
+initial-condition component classification.
+
+## 15. Return Codes
 
 The following table lists all return codes defined in `radau5.h`.
 
@@ -999,7 +1077,7 @@ The following table lists all return codes defined in `radau5.h`.
 | `RADAU5_ROOT_RETURN`     |   3   | A root (event) was found. Query with `Radau5GetRootInfo`.          |
 | `RADAU5_ROOTFN_FAIL`     | -12   | The user-supplied root function returned a negative (error) value. |
 
-## 15. Rootfinding (Event Detection)
+## 16. Rootfinding (Event Detection)
 
 RADAU5 can detect zero crossings of user-supplied scalar functions during
 integration. This is useful for locating events such as state thresholds,

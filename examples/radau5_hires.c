@@ -31,14 +31,58 @@ static int rhs(sunrealtype t, N_Vector y, N_Vector yd, void* ud)
   return 0;
 }
 
+static int jac(sunrealtype t, N_Vector y, N_Vector fy, SUNMatrix J,
+               void* ud, N_Vector t1, N_Vector t2, N_Vector t3)
+{
+  (void)t; (void)fy; (void)ud; (void)t1; (void)t2; (void)t3;
+  sunrealtype* v = N_VGetArrayPointer(y);
+
+  SUNMatZero(J);
+
+  SM_ELEMENT_D(J, 0, 0) = -1.71;
+  SM_ELEMENT_D(J, 0, 1) =  0.43;
+  SM_ELEMENT_D(J, 0, 2) =  8.32;
+
+  SM_ELEMENT_D(J, 1, 0) =  1.71;
+  SM_ELEMENT_D(J, 1, 1) = -8.75;
+
+  SM_ELEMENT_D(J, 2, 2) = -10.03;
+  SM_ELEMENT_D(J, 2, 3) =  0.43;
+  SM_ELEMENT_D(J, 2, 4) =  0.035;
+
+  SM_ELEMENT_D(J, 3, 1) =  8.32;
+  SM_ELEMENT_D(J, 3, 2) =  1.71;
+  SM_ELEMENT_D(J, 3, 3) = -1.12;
+
+  SM_ELEMENT_D(J, 4, 4) = -1.745;
+  SM_ELEMENT_D(J, 4, 5) =  0.43;
+  SM_ELEMENT_D(J, 4, 6) =  0.43;
+
+  SM_ELEMENT_D(J, 5, 3) =  0.69;
+  SM_ELEMENT_D(J, 5, 4) =  1.71;
+  SM_ELEMENT_D(J, 5, 5) = -280.0*v[7] - 0.43;
+  SM_ELEMENT_D(J, 5, 6) =  0.69;
+  SM_ELEMENT_D(J, 5, 7) = -280.0*v[5];
+
+  SM_ELEMENT_D(J, 6, 5) =  280.0*v[7];
+  SM_ELEMENT_D(J, 6, 6) = -1.81;
+  SM_ELEMENT_D(J, 6, 7) =  280.0*v[5];
+
+  SM_ELEMENT_D(J, 7, 5) = -280.0*v[7];
+  SM_ELEMENT_D(J, 7, 6) =  1.81;
+  SM_ELEMENT_D(J, 7, 7) = -280.0*v[5];
+
+  return 0;
+}
+
 int main(int argc, char* argv[])
 {
-  sunrealtype rtol = 1.0e-9;
-  sunrealtype atol_val = 1.0e-9;
-  sunrealtype h0   = 1.0e-9;
-  int use_schur    = 0;
-  int nsmin        = 3;
-  int nsmax        = 7;
+  sunrealtype rtol = 1.0e-10;
+  sunrealtype atol_val = 1.0e-10;
+  sunrealtype h0   = 1.0e-12;
+  int use_schur    = 1;
+  int nsmin        = 11;
+  int nsmax        = 11;
   if (argc > 1) rtol      = atof(argv[1]);
   if (argc > 2) atol_val  = atof(argv[2]);
   if (argc > 3) h0        = atof(argv[3]);
@@ -61,7 +105,7 @@ int main(int argc, char* argv[])
   SUNMatrix Jt = SUNDenseMatrix(n, n, sunctx);
   Radau5SetLinearSolver(mem, Jt, NULL);
   Radau5SetSchurDecomp(mem, use_schur);
-  /* Use DQ Jacobian (no analytic Jacobian provided) */
+  Radau5SetJacFn(mem, jac);
   Radau5SStolerances(mem, rtol, atol_val);
   Radau5SetInitStep(mem, h0);
 

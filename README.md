@@ -13,7 +13,7 @@ A C implementation of the RADAU solver — a variable-order (3, 5, 7, 9, 11, or 
 - **Event detection (rootfinding)** via Illinois method with dense output interpolation
 - **Discontinuity handling** via `Radau5ResetForDiscontinuity`
 - **Continuous output** polynomial for dense output between steps
-- **24 example problems** from the IVP Test Set and beyond
+- **36 example programs** from the IVP Test Set and beyond
 
 ## Dependencies
 
@@ -29,7 +29,7 @@ A C implementation of the RADAU solver — a variable-order (3, 5, 7, 9, 11, or 
 mkdir build && cd build
 cmake .. -DSUNDIALS_DIR=/path/to/sundials/install
 make -j$(nproc)
-ctest   # runs all 201 tests (problems × modes × order configs)
+ctest   # runs the example regression matrix (problems × modes × order configs)
 ```
 
 ## Quick Example
@@ -105,7 +105,7 @@ sunrealtype Radau5Contr(void* mem, sunindextype i, sunrealtype t);
 
 ## Examples
 
-24 example programs covering stiff ODEs, banded/sparse systems, DAEs of index 1–3, and event detection:
+36 example programs covering stiff ODEs, banded/sparse systems, DAEs of index 1–3, event detection, and larger PDE/circuit benchmarks:
 
 | Problem | Type | n | Matrix |
 |---------|------|---|--------|
@@ -113,26 +113,38 @@ sunrealtype Radau5Contr(void* mem, sunindextype i, sunrealtype t);
 | rober | ODE | 3 | dense |
 | orego | ODE | 3 | dense |
 | e5 | ODE | 4 | dense |
-| hires | ODE | 8 | dense (DQ) |
+| hires | ODE | 8 | dense (analytic) |
 | plei | ODE | 28 | dense |
+| pollu | ODE | 20 | sparse/KLU |
+| plate | ODE | 80 | sparse/KLU |
 | ringmod | ODE | 15 | dense |
 | heat1d | ODE | 100 | band |
 | medakzo | ODE | 400 | band |
-| pollu | ODE | 20 | sparse/KLU |
 | chemakzo | DAE-1 | 6 | dense + mass |
 | transamp | DAE-1 | 8 | dense + mass |
 | transamp_sparse | DAE-1 | 8 | sparse + sparse mass |
 | andrews | DAE-3 | 27 | dense + mass |
+| ark_analytic | ODE | 1 | dense |
+| vdpolm | ODE | 2 | dense |
 | caraxis | DAE-3 | 10 | dense + mass |
+| beam | ODE | 80 | dense |
 | crank | DAE-2 | 24 | dense + mass |
 | water | DAE-2 | 49 | dense + mass |
 | fekete | DAE-2 | 160 | dense + mass |
+| pump | DAE-2 | 9 | dense + mass |
+| pump_smooth | DAE-2 | 9 | dense + mass |
 | tba | DAE-1 | 350 | dense + mass |
+| tba_smooth | DAE-1 | 350 | dense + mass |
+| tba2 | DAE-1 | 350 | dense + mass |
 | bounce | ODE | 2 | dense (rootfinding) |
+| roberts_root | ODE | 3 | dense (rootfinding) |
 | rocket | ODE | 2 | dense (rootfinding) |
 | orbit | ODE | 4 | dense (rootfinding) |
 | kepler | ODE | 4 | dense (rootfinding) |
 | kneeode | ODE | 1 | dense (rootfinding) |
+| ks | ODE | 1022 | dense |
+| bruss | ODE | 2 | dense |
+| bruss_2d | ODE | 8192 | sparse/KLU |
 
 See [doc/examples.md](doc/examples.md) for full details.
 
@@ -141,6 +153,7 @@ See [doc/examples.md](doc/examples.md) for full details.
 - [doc/theory.md](doc/theory.md) — Mathematical theory
 - [doc/user_guide.md](doc/user_guide.md) — API reference
 - [doc/examples.md](doc/examples.md) — Example problems guide
+- [doc/Practical Error Estimation and Step Size Selection.md](doc/Practical%20Error%20Estimation%20and%20Step%20Size%20Selection.md) — Error estimation and adaptive step-size background
 
 ## License
 

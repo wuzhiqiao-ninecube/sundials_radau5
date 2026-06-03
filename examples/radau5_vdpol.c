@@ -48,7 +48,7 @@ int main(int argc, char* argv[])
   sunrealtype h0   = 1e-6;
   int use_schur    = 0;
   int nsmin        = 3;
-  int nsmax        = 7;
+  int nsmax        = 13;
   if (argc > 1) rtol      = atof(argv[1]);
   if (argc > 2) atol      = atof(argv[2]);
   if (argc > 3) h0        = atof(argv[3]);

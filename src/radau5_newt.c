@@ -12,7 +12,6 @@
  * ---------------------------------------------------------------------------*/
 
 #include <math.h>
-#include <stdlib.h>
 #include <sundials/sundials_math.h>
 #include "radau5_impl.h"
 
@@ -43,11 +42,6 @@ int radau5_Newton(Radau5Mem rmem, int* newt_out)
 
   int newt = 0;
 
-  /* Temporary buffer for mass-mult results */
-  sunrealtype mf_stack[1024];
-  sunrealtype *mf_buf = (n <= 1024) ? mf_stack
-                       : (sunrealtype*)malloc((size_t)n * sizeof(sunrealtype));
-
   /* =========================================================================
    * Newton loop
    * =======================================================================*/
@@ -56,7 +50,6 @@ int radau5_Newton(Radau5Mem rmem, int* newt_out)
     if (newt >= nit)
     {
       *newt_out = newt;
-      if (n > 1024) free(mf_buf);
       return RADAU5_CONV_FAILURE;
     }
 
@@ -70,8 +63,8 @@ int radau5_Newton(Radau5Mem rmem, int* newt_out)
       N_VLinearSum(SUN_RCONST(1.0), ycur, SUN_RCONST(1.0), rmem->z[k], tmp1);
       sunrealtype tk = tn + rmem->c[k] * h;
       int rhsret = rmem->rhs(tk, tmp1, rmem->z[k], rmem->user_data);
-      if (rhsret < 0) { if (n > 1024) free(mf_buf); return RADAU5_RHSFUNC_FAIL; }
-      if (rhsret > 0) { if (n > 1024) free(mf_buf); return RADAU5_RHSFUNC_RECVR; }
+      if (rhsret < 0) return RADAU5_RHSFUNC_FAIL;
+      if (rhsret > 0) return RADAU5_RHSFUNC_RECVR;
     }
     rmem->nfcn += ns;
 
@@ -121,8 +114,8 @@ int radau5_Newton(Radau5Mem rmem, int* newt_out)
      * ----------------------------------------------------------------*/
     sunrealtype fac1 = rmem->u1 / h;
 
-    /* NVEC_DIRECT_ACCESS: Stage vector element access for RHS formation and linear solve
-     * pack/unpack. The fd/zd pointers are used throughout steps 3-6 below. */
+    /* NVEC_DIRECT_ACCESS: fd/zd pointers used in step 6 (f update + back-transform)
+     * and by radau5_SolveE2c (complex pack/unpack). */
     sunrealtype *fd[RADAU5_NS_MAX], *zd[RADAU5_NS_MAX];
     for (int k = 0; k < ns; k++)
     {
@@ -133,42 +126,36 @@ int radau5_Newton(Radau5Mem rmem, int* newt_out)
     if (rmem->use_schur)
     {
       /* --- Schur mode --- */
-      /* Form RHS: z[r] -= sum_j (TS[r][j]/h) * M*f[j] for upper-triangular TS */
-      sunrealtype *mf_ptrs[RADAU5_NS_MAX];
-      sunrealtype *mf_alloc = NULL;
-
+      /* Compute M*f[j] into w[j] as scratch (w[] is free after TI transform) */
       if (rmem->M != NULL)
       {
-        mf_alloc = (sunrealtype*)malloc((size_t)(ns * n) * sizeof(sunrealtype));
         for (int j = 0; j < ns; j++)
-        {
-          mf_ptrs[j] = mf_alloc + j * n;
-          radau5_MassMult(rmem, rmem->f[j], tmp1);
-          /* NVEC_DIRECT_ACCESS: TS quasi-triangular matrix row scalings with mass-mult intermediates */
-          sunrealtype *td = N_VGetArrayPointer(tmp1);
-          for (sunindextype ii = 0; ii < n; ii++)
-            mf_ptrs[j][ii] = td[ii];
-        }
-      }
-      else
-      {
-        for (int j = 0; j < ns; j++)
-          mf_ptrs[j] = fd[j];
+          radau5_MassMult(rmem, rmem->f[j], rmem->w[j]);
       }
 
-      /* Apply TS row scalings (TS is quasi-triangular, NOT upper triangular) */
+      /* Apply TS row scalings: z[r] -= sum_j (TS[r][j]/h) * mf[j]
+       * where mf[j] = w[j] (mass case) or f[j] (identity mass) */
+      N_Vector *mf_src = (rmem->M != NULL) ? rmem->w : rmem->f;
       for (int r = 0; r < ns; r++)
       {
-        for (sunindextype ii = 0; ii < n; ii++)
+        sunrealtype coeffs[RADAU5_NS_MAX];
+        N_Vector vecs[RADAU5_NS_MAX];
+        int nterms = 0;
+        for (int j = 0; j < ns; j++)
         {
-          sunrealtype sum = SUN_RCONST(0.0);
-          for (int j = 0; j < ns; j++)
+          sunrealtype tsrj = rmem->TS_mat[r * ns + j];
+          if (tsrj != SUN_RCONST(0.0))
           {
-            sunrealtype tsrj = rmem->TS_mat[r * ns + j];
-            if (tsrj != SUN_RCONST(0.0))
-              sum += (tsrj / h) * mf_ptrs[j][ii];
+            coeffs[nterms] = -(tsrj / h);
+            vecs[nterms] = mf_src[j];
+            nterms++;
           }
-          zd[r][ii] -= sum;
+        }
+        if (nterms > 0)
+        {
+          N_VLinearCombination(nterms, coeffs, vecs, tmp1);
+          N_VLinearSum(SUN_RCONST(1.0), rmem->z[r],
+                       SUN_RCONST(1.0), tmp1, rmem->z[r]);
         }
       }
 
@@ -176,30 +163,25 @@ int radau5_Newton(Radau5Mem rmem, int* newt_out)
        * 1. Solve E1 for z[ns-1] (1×1 block at bottom-right) */
       if (SUNLinSolSolve(rmem->LS_E1, rmem->E1, rmem->z[ns-1], rmem->z[ns-1],
                          SUN_RCONST(0.0)) != 0)
-      {
-        if (mf_alloc) free(mf_alloc);
-        if (n > 1024) free(mf_buf);
         return RADAU5_LSOLVE_FAIL;
-      }
 
       /* 2. Back-substitute z[ns-1] into earlier rows */
       {
-        sunrealtype *df_last;
+        N_Vector df_last;
         if (rmem->M != NULL)
         {
           radau5_MassMult(rmem, rmem->z[ns-1], tmp1);
-          /* NVEC_DIRECT_ACCESS: Block triangular solve coupling between stage pairs */
-          df_last = N_VGetArrayPointer(tmp1);
+          df_last = tmp1;
         }
         else
-          df_last = N_VGetArrayPointer(rmem->z[ns-1]);
+          df_last = rmem->z[ns-1];
 
         for (int r = 0; r < ns - 1; r++)
         {
           sunrealtype coeff = rmem->TS_mat[r * ns + (ns - 1)] / h;
           if (coeff != SUN_RCONST(0.0))
-            for (sunindextype ii = 0; ii < n; ii++)
-              zd[r][ii] -= coeff * df_last[ii];
+            N_VLinearSum(SUN_RCONST(1.0), rmem->z[r],
+                         -coeff, df_last, rmem->z[r]);
         }
       }
 
@@ -208,54 +190,50 @@ int radau5_Newton(Radau5Mem rmem, int* newt_out)
       {
         int r0 = 2 * pk, r1 = r0 + 1;
 
-        if (radau5_SolveE2c(rmem, pk, zd[r0], zd[r1]) != RADAU5_SUCCESS)
-        {
-          if (mf_alloc) free(mf_alloc);
-          if (n > 1024) free(mf_buf);
+        /* NVEC_DIRECT_ACCESS: E2c solve requires raw pointers for complex pack/unpack */
+        if (radau5_SolveE2c(rmem, pk, N_VGetArrayPointer(rmem->z[r0]),
+                            N_VGetArrayPointer(rmem->z[r1])) != RADAU5_SUCCESS)
           return RADAU5_LSOLVE_FAIL;
-        }
 
         /* Back-substitute into earlier rows */
         if (pk > 0)
         {
           for (int sc = r0; sc <= r1; sc++)
           {
-            sunrealtype *df_col;
+            N_Vector df_col;
             if (rmem->M != NULL)
             {
               radau5_MassMult(rmem, rmem->z[sc], tmp1);
-              /* NVEC_DIRECT_ACCESS: Block triangular solve coupling between stage pairs */
-              df_col = N_VGetArrayPointer(tmp1);
+              df_col = tmp1;
             }
             else
-              df_col = zd[sc];
+              df_col = rmem->z[sc];
 
             for (int r = 0; r < r0; r++)
             {
               sunrealtype coeff = rmem->TS_mat[r * ns + sc] / h;
               if (coeff != SUN_RCONST(0.0))
-                for (sunindextype ii = 0; ii < n; ii++)
-                  zd[r][ii] -= coeff * df_col[ii];
+                N_VLinearSum(SUN_RCONST(1.0), rmem->z[r],
+                             -coeff, df_col, rmem->z[r]);
             }
           }
         }
       }
 
-      if (mf_alloc) free(mf_alloc);
       rmem->nsol++;
       newt++;
     }
     else
     {
       /* --- Eigenvalue mode --- */
+      /* Use w[] as scratch (free after TI transform above). */
+
       if (rmem->M != NULL)
       {
         /* General mass: S[j] = -(M * f[j]) */
         /* Real eigenvalue: z[0] -= fac1 * M*f[0] */
         radau5_MassMult(rmem, rmem->f[0], tmp1);
-        sunrealtype *mfd = N_VGetArrayPointer(tmp1);
-        for (sunindextype ii = 0; ii < n; ii++)
-          zd[0][ii] -= fac1 * mfd[ii];
+        N_VLinearSum(SUN_RCONST(1.0), rmem->z[0], -fac1, tmp1, rmem->z[0]);
 
         /* Complex pairs */
         for (int pk = 0; pk < npairs; pk++)
@@ -264,31 +242,26 @@ int radau5_Newton(Radau5Mem rmem, int* newt_out)
           sunrealtype alphn_k = rmem->alph[pk] / h;
           sunrealtype betan_k = rmem->beta_eig[pk] / h;
 
-          /* S[r0] = -(M * f[r0]) */
-          radau5_MassMult(rmem, rmem->f[r0], tmp1);
-          mfd = N_VGetArrayPointer(tmp1);
-          for (sunindextype ii = 0; ii < n; ii++)
-            mf_buf[ii] = -mfd[ii];
+          /* M*f[r0] → w[0], M*f[r1] → w[1] */
+          radau5_MassMult(rmem, rmem->f[r0], rmem->w[0]);
+          radau5_MassMult(rmem, rmem->f[r1], rmem->w[1]);
 
-          /* S[r1] = -(M * f[r1]) */
-          radau5_MassMult(rmem, rmem->f[r1], tmp1);
-          mfd = N_VGetArrayPointer(tmp1);
+          /* z[r0] += -alphn_k * w[0] + betan_k * w[1]  (S = -M*f) */
+          N_VLinearSum(-alphn_k, rmem->w[0], betan_k, rmem->w[1], tmp1);
+          N_VLinearSum(SUN_RCONST(1.0), rmem->z[r0], SUN_RCONST(1.0), tmp1,
+                       rmem->z[r0]);
 
-          for (sunindextype ii = 0; ii < n; ii++)
-          {
-            sunrealtype s_r0 = mf_buf[ii];
-            sunrealtype s_r1 = -mfd[ii];
-            zd[r0][ii] += alphn_k * s_r0 - betan_k * s_r1;
-            zd[r1][ii] += alphn_k * s_r1 + betan_k * s_r0;
-          }
+          /* z[r1] += -alphn_k * w[1] - betan_k * w[0]  (S = -M*f) */
+          N_VLinearSum(-alphn_k, rmem->w[1], -betan_k, rmem->w[0], tmp1);
+          N_VLinearSum(SUN_RCONST(1.0), rmem->z[r1], SUN_RCONST(1.0), tmp1,
+                       rmem->z[r1]);
         }
       }
       else
       {
         /* Identity mass: S[j] = -f[j] */
         /* Real eigenvalue: z[0] -= fac1 * f[0] */
-        for (sunindextype ii = 0; ii < n; ii++)
-          zd[0][ii] -= fac1 * fd[0][ii];
+        N_VLinearSum(SUN_RCONST(1.0), rmem->z[0], -fac1, rmem->f[0], rmem->z[0]);
 
         /* Complex pairs */
         for (int pk = 0; pk < npairs; pk++)
@@ -297,34 +270,32 @@ int radau5_Newton(Radau5Mem rmem, int* newt_out)
           sunrealtype alphn_k = rmem->alph[pk] / h;
           sunrealtype betan_k = rmem->beta_eig[pk] / h;
 
-          for (sunindextype ii = 0; ii < n; ii++)
-          {
-            sunrealtype s_r0 = -fd[r0][ii];
-            sunrealtype s_r1 = -fd[r1][ii];
-            zd[r0][ii] += alphn_k * s_r0 - betan_k * s_r1;
-            zd[r1][ii] += alphn_k * s_r1 + betan_k * s_r0;
-          }
+          /* z[r0] += -alphn_k * f[r0] + betan_k * f[r1] */
+          N_VLinearSum(-alphn_k, rmem->f[r0], betan_k, rmem->f[r1], tmp1);
+          N_VLinearSum(SUN_RCONST(1.0), rmem->z[r0], SUN_RCONST(1.0), tmp1,
+                       rmem->z[r0]);
+
+          /* z[r1] += -alphn_k * f[r1] - betan_k * f[r0] */
+          N_VLinearSum(-alphn_k, rmem->f[r1], -betan_k, rmem->f[r0], tmp1);
+          N_VLinearSum(SUN_RCONST(1.0), rmem->z[r1], SUN_RCONST(1.0), tmp1,
+                       rmem->z[r1]);
         }
       }
 
       /* Solve E1 for z[0] (real eigenvalue) */
       if (SUNLinSolSolve(rmem->LS_E1, rmem->E1, rmem->z[0], rmem->z[0],
                          SUN_RCONST(0.0)) != 0)
-      {
-        if (n > 1024) free(mf_buf);
         return RADAU5_LSOLVE_FAIL;
-      }
 
       /* Solve E2[pk] for each complex pair */
       for (int pk = 0; pk < npairs; pk++)
       {
         int r0 = 2 * pk + 1, r1 = r0 + 1;
 
-        if (radau5_SolveE2c(rmem, pk, zd[r0], zd[r1]) != RADAU5_SUCCESS)
-        {
-          if (n > 1024) free(mf_buf);
+        /* NVEC_DIRECT_ACCESS: E2c solve requires raw pointers for complex pack/unpack */
+        if (radau5_SolveE2c(rmem, pk, N_VGetArrayPointer(rmem->z[r0]),
+                            N_VGetArrayPointer(rmem->z[r1])) != RADAU5_SUCCESS)
           return RADAU5_LSOLVE_FAIL;
-        }
       }
 
       rmem->nsol++;
@@ -378,14 +349,12 @@ int radau5_Newton(Radau5Mem rmem, int* newt_out)
           rmem->last   = 0;
           if (rmem->hhfac <= SUN_RCONST(0.5)) rmem->unexn = 1;
           *newt_out    = newt;
-          if (n > 1024) free(mf_buf);
           return RADAU5_NEWT_PREDICT;
         }
       }
       else
       {
         *newt_out = newt;
-        if (n > 1024) free(mf_buf);
         return RADAU5_CONV_FAILURE;
       }
     }
@@ -433,6 +402,5 @@ int radau5_Newton(Radau5Mem rmem, int* newt_out)
   *newt_out    = newt;
   rmem->nnewt += newt;
 
-  if (n > 1024) free(mf_buf);
   return RADAU5_SUCCESS;
 }

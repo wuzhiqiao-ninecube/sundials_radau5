@@ -159,7 +159,7 @@ All examples accept command-line arguments: `rtol atol h0 use_schur nsmin nsmax`
 # Run with variable order
 ./bin/radau5_vdpol 1e-6 1e-6 1e-6 0 3 7
 
-# CTest: 201 tests (problems × schur modes × order configs)
+# CTest: example regression matrix (problems × schur modes × order configs)
 cd build && ctest
 ctest -R eigen           # eigenvalue mode only
 ctest -R schur           # Schur mode only
@@ -182,11 +182,11 @@ CTest configurations per problem:
 - `radau5_<prob>_eigen_ns13` / `radau5_<prob>_schur_ns13` — fixed order 25
 - `radau5_<prob>_eigen_nsvar` / `radau5_<prob>_schur_nsvar` — variable order 3→13
 
-DAE-3 problems (andrews, caraxis) and tba skip ns≥7 tests (known incompatibility with high-order methods for index-3 DAEs; tba is too slow at high ns).
+Reduced-order tests (ns3, ns5, nsvar with nsmin=3 nsmax=7) are used for DAE-3 problems (`andrews`, `caraxis`) and large/expensive examples (`tba`, `tba_smooth`, `ks`).
 
 Unit tests: `test_radau5_constants`, `test_radau5_constants_high`, `test_radau5_api`, `test_radau5_build_e1`, `test_radau5_build_e2`, `test_radau5_dq_jac`, `test_radau5_colgroup`, `test_radau5_dq_jac_sparse`.
 
-### Examples (24 problems)
+### Examples (36 problems)
 
 #### Original 13 IVPtestset problems
 
@@ -196,7 +196,7 @@ Unit tests: `test_radau5_constants`, `test_radau5_constants_high`, `test_radau5_
 | rober | ODE | 3 | dense | 1e-10 / 1e-14 / 1e-12 |
 | orego | ODE | 3 | dense | 1e-6 / 1e-6 / 1e-6 |
 | e5 | ODE | 4 | dense | 1e-4 / 1e-24 / 1e-6 |
-| hires | ODE | 8 | dense (DQ) | 1e-9 / 1e-9 / 1e-9 |
+| hires | ODE | 8 | dense (analytic Jac) | 1e-9 / 1e-9 / 1e-9 |
 | plei | ODE | 28 | dense | 1e-6 / 1e-6 / 1e-6 |
 | ringmod | ODE | 15 | dense | 1e-7 / 1e-7 / 1e-6 |
 | heat1d | ODE | 100 | band(1,1) DQ | 1e-10 / 1e-12 / 1e-6 |
@@ -223,8 +223,14 @@ Unit tests: `test_radau5_constants`, `test_radau5_constants_high`, `test_radau5_
 | beam | ODE | 80 | dense (DQ) | 1e-6 / 1e-6 / 1e-6 |
 | fekete | DAE-2 | 160 | dense (DQ) + diag mass | 1e-6 / 1e-6 / 1e-6 |
 | tba | DAE-1 | 350 | dense (DQ) + diag mass | 1e-5 / 1e-5 / 4e-5 |
+| tba_smooth | DAE-1 | 350 | dense (DQ) + diag mass | 1e-5 / 1e-5 / 4e-5 |
+| tba2 | DAE-1 | 350 | dense (DQ) + diag mass | problem default |
 | pump | DAE-2 | 9 | dense (analytic Jac) + mass | 1e-7 / 1e-7 / 1e-3 |
 | pump_smooth | DAE-2 | 9 | dense (analytic Jac, smoothed) + mass | 1e-7 / 1e-7 / 1e-3 |
+| plate | ODE | 80 | sparse/KLU | 1e-10 / 1e-10 / 1e-2 |
+| ks | ODE | 1022 | dense (DQ) | 1e-8 / 1e-8 / 1e-6 |
+| bruss | ODE | 2 | dense | 1e-6 / 1e-6 / 1e-6 |
+| bruss_2d | ODE | 8192 | sparse/KLU | 1e-6 / 1e-6 / 1e-4 |
 
 #### ARKODE comparison
 
@@ -266,7 +272,7 @@ Remaining `N_VGetArrayPointer` calls are marked with `/* NVEC_DIRECT_ACCESS: <re
 - **DQ Jacobian**: Column perturbation with element-wise increments
 - **IC computation**: Conditional per-element based on algebraic/differential ID vector
 
-When adding new code, prefer generic N_Vector ops. Use `N_VGetArrayPointer` only when the operation cannot be expressed with the generic interface, and mark it with the `NVEC_DIRECT_ACCESS` comment.
+When adding new code, prefer generic N_Vector ops. Use `N_VGetArrayPointer` only when the operation cannot be expressed with the generic interface, and mark it with the `NVEC_DIRECT_ACCESS` comment. In `radau5_newt.c`, avoid per-iteration `malloc`/`free` scratch arrays; reuse solver-owned workspace (`rmem->w`, `tmp1`–`tmp3`) and generic `N_Vector` operations whenever possible.
 
 ## Documentation
 
@@ -276,7 +282,8 @@ Detailed documentation in `doc/`:
 |----------|-------------|
 | [doc/theory.md](doc/theory.md) | Mathematical theory: Radau IIA method, Newton iteration (eigenvalue + Schur), error estimation, step size control, tolerance transformation, continuous output, DAE support |
 | [doc/user_guide.md](doc/user_guide.md) | API reference: skeleton program, all function signatures, optional inputs/outputs, return codes, complete Van der Pol example |
-| [doc/examples.md](doc/examples.md) | 13 example problems: equations, parameters, usage, reference solutions. Covers stiff/non-stiff ODEs, band/sparse, DAE index-1/2/3 |
+| [doc/examples.md](doc/examples.md) | 36 example programs: equations, parameters, usage, reference solutions. Covers stiff/non-stiff ODEs, band/sparse, DAE index-1/2/3, rootfinding, and larger PDE/circuit benchmarks |
+| [doc/Practical Error Estimation and Step Size Selection.md](doc/Practical%20Error%20Estimation%20and%20Step%20Size%20Selection.md) | Background on practical RK error estimates and adaptive step-size selection |
 
 ## Sparse Mass Matrix Support
 

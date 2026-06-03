@@ -1,8 +1,11 @@
 /* ---------------------------------------------------------------------------
- * radau5_tba2.c -- Two Bit Adding Unit (DAE index-1, n=350)
+ * radau5_tba_smooth.c -- Two Bit Adding Unit (DAE index-1, n=350) SMOOTHED
  *
- * Faithful C translation of the Fortran source:
- *   IVPtestset_2.4/src/problems/tba.f
+ * Based on radau5_tba.c with smoothed device model functions:
+ *   - fn_IBS / fn_IBD: sigmoid damping at V=0 (eliminates derivative jump)
+ *   - fn_IDS: sigmoid blending of GDSP/GDSM at VDS=0
+ *
+ * See tbadae_smooth_doc.md for analysis of non-smooth points.
  *
  * M*y' = f(t,y) where M = diag(1,...,1,0,...,0)  (175 ones, 175 zeros)
  *
@@ -42,11 +45,23 @@ typedef struct
   sunrealtype DELTA, CTIME, STIFF;
   sunrealtype CURIS, VTH, VDD, VBB;
   sunrealtype CLOAD, COUT;
+  sunrealtype EPS_SMOOTH;  /* smoothing parameter for sigmoid transitions */
 } TbaParams;
 
 /* =========================================================================
  * MOSFET model functions (Shichman-Hodges)
  * =========================================================================*/
+
+/* =========================================================================
+ * Smoothing helper: numerically stable sigmoid
+ * =========================================================================*/
+static sunrealtype sigmoid_s(sunrealtype x, sunrealtype eps)
+{
+  sunrealtype z = x / eps;
+  if (z > 30.0) return 1.0;
+  if (z < -30.0) return 0.0;
+  return 1.0 / (1.0 + exp(-z));
+}
 
 /* Voltage-dependent bulk capacitance CBDBS */
 static sunrealtype CBDBS(sunrealtype V, const TbaParams* p)
@@ -58,22 +73,22 @@ static sunrealtype CBDBS(sunrealtype V, const TbaParams* p)
     return p->CBD * (1.0 + V / (2.0 * PHIB));
 }
 
-/* Bulk-source junction current IBS */
+/* Bulk-source junction current IBS -- SMOOTHED */
 static sunrealtype fn_IBS(sunrealtype VBS, const TbaParams* p)
 {
-  if (VBS <= 0.0)
-    return -p->CURIS * (exp(VBS / p->VTH) - 1.0);
-  else
-    return 0.0;
+  /* Original: -CURIS*(exp(VBS/VTH)-1) for VBS<=0, 0 for VBS>0
+   * Smoothed: multiply by sigmoid(-VBS/EPS) to smoothly turn off at VBS=0 */
+  sunrealtype sig = sigmoid_s(-VBS, p->EPS_SMOOTH);
+  return -p->CURIS * (exp(VBS / p->VTH) - 1.0) * sig;
 }
 
-/* Bulk-drain junction current IBD */
+/* Bulk-drain junction current IBD -- SMOOTHED */
 static sunrealtype fn_IBD(sunrealtype VBD, const TbaParams* p)
 {
-  if (VBD <= 0.0)
-    return -p->CURIS * (exp(VBD / p->VTH) - 1.0);
-  else
-    return 0.0;
+  /* Original: -CURIS*(exp(VBD/VTH)-1) for VBD<=0, 0 for VBD>0
+   * Smoothed: multiply by sigmoid(-VBD/EPS) to smoothly turn off at VBD=0 */
+  sunrealtype sig = sigmoid_s(-VBD, p->EPS_SMOOTH);
+  return -p->CURIS * (exp(VBD / p->VTH) - 1.0) * sig;
 }
 
 /* Drain current for VDS > 0: GDSP */
@@ -139,21 +154,19 @@ static sunrealtype GDSM(int NED, sunrealtype VDS, sunrealtype VGD,
   else
     return -BETA * VDS * (2.0 * (VGD - VTE) + VDS) * (1.0 - p->DELTA * VDS);
 }
-/* Drain-source current IDS (dispatches on sign of VDS) */
+/* Drain-source current IDS (dispatches on sign of VDS) -- SMOOTHED */
 static sunrealtype fn_IDS(int NED, sunrealtype VDS, sunrealtype VGS,
                            sunrealtype VBS, sunrealtype VGD, sunrealtype VBD,
                            int* ierr, const TbaParams* p)
 {
-  sunrealtype val;
-  if (VDS > 0.0) {
-    val = GDSP(NED, VDS, VGS, VBS, ierr, p);
-  } else if (VDS == 0.0) {
-    val = 0.0;
-  } else {
-    val = GDSM(NED, VDS, VGD, VBD, ierr, p);
-  }
-  if (*ierr == -1) return val;
-  return val;
+  /* Smooth blending of GDSP and GDSM at VDS=0 using sigmoid.
+   * Original: hard switch at VDS>0 / VDS==0 / VDS<0
+   * Smoothed: sigmoid(VDS/EPS) * GDSP + (1-sigmoid) * GDSM */
+  sunrealtype sig = sigmoid_s(VDS, p->EPS_SMOOTH);
+  sunrealtype vds_abs = fabs(VDS) + p->EPS_SMOOTH * 1e-10;  /* avoid exact zero */
+  sunrealtype gp = GDSP(NED, vds_abs, VGS, VBS, ierr, p);
+  sunrealtype gm = GDSM(NED, -vds_abs, VGD, VBD, ierr, p);
+  return sig * gp + (1.0 - sig) * gm;
 }
 
 /* =========================================================================
@@ -842,6 +855,7 @@ static void init_params(TbaParams* p)
   p->VBB   = -2.5;
   p->CLOAD = 0.0;
   p->COUT  = 2.0e-4 * p->CTIME - p->CLOAD;
+  p->EPS_SMOOTH = 0.05;  /* smoothing parameter: ~1% of VDD=5V */
 }
 
 static void init_voltages(sunrealtype* U)
@@ -1140,8 +1154,8 @@ int main(int argc, char* argv[])
 
   sunrealtype* yd = N_VGetArrayPointer(yout);
 
-  printf("=== Two Bit Adding Unit (rtol=%.1e atol=%.1e h0=%.1e schur=%d) ===\n",
-         rtol, atol_val, h0, use_schur);
+  printf("=== Two Bit Adding Unit SMOOTHED (rtol=%.1e atol=%.1e h0=%.1e schur=%d eps=%.2e) ===\n",
+         rtol, atol_val, h0, use_schur, params.EPS_SMOOTH);
   printf("ret=%d, tret=%.6e, segments=%d\n", ret, tret, ndisc + 1);
 
   sunrealtype err1 = fabs(yd[223] - yref_224);

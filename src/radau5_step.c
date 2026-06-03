@@ -23,8 +23,6 @@ int radau5_Step(Radau5Mem rmem)
 
   /* Eigenvalue parameters */
   sunrealtype u1   = rmem->u1;
-  sunrealtype alph = rmem->alph[0];
-  sunrealtype beta = rmem->beta_eig[0];
 
   /* Step-size control parameters */
   sunrealtype safe  = rmem->safe;
@@ -43,7 +41,7 @@ int radau5_Step(Radau5Mem rmem)
   int ret;
   int newt = 0;
   sunrealtype err;
-  sunrealtype fac1, alphn, betan;
+  sunrealtype fac1;
   sunrealtype fac, quot, hnew, qt;
   sunrealtype facgus;
 
@@ -68,10 +66,6 @@ int radau5_Step(Radau5Mem rmem)
         goto label20;  /* retry with potential order increase */
     }
 
-    /* Recompute fac1, alphn, betan for the (unchanged) h */
-    fac1  = u1   / rmem->h;
-    alphn = alph / rmem->h;
-    betan = beta / rmem->h;
     goto label30;
   }
   if (!rmem->caljac)
@@ -147,8 +141,6 @@ label20:
       /* Update local variables that depend on ns */
       ns = rmem->ns;
       u1 = rmem->u1;
-      alph = rmem->alph[0];
-      beta = rmem->beta_eig[0];
     }
   }
 
@@ -156,8 +148,6 @@ label20:
    * Build and factor E1, E2
    * =======================================================================*/
   fac1  = u1   / rmem->h;
-  alphn = alph / rmem->h;
-  betan = beta / rmem->h;
 
   radau5_BuildE1(rmem, fac1);
   for (int pk = 0; pk < rmem->npairs; pk++) {
